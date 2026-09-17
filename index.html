@@ -138,7 +138,7 @@
         Add GI Hole
       </button>
       <div class="grid grid-cols-3 gap-1 mt-2">
-        <button id="btn-new-page" type="button" class="btn btn-ghost py-1 text-[11px]" title="Clear imported holes and start a new page">New Page</button>
+        <button id="btn-new-page" type="button" class="btn btn-ghost py-1 text-[11px]" title="Clear all imported boreholes and reset the workspace">New Page</button>
         <button id="btn-share" type="button" class="btn btn-ghost py-1 text-[11px]" title="Encode the current view into a shareable link">Save &amp; Share</button>
         <button id="btn-export-pdf" type="button" class="btn btn-ghost py-1 text-[11px]" title="Export the active chart as an A4 landscape PDF">Export PDF</button>
       </div>
@@ -150,12 +150,20 @@
         <input id="search" type="search" placeholder="Search boreholes…" autocomplete="off"
           class="w-full pl-8 pr-2 py-1.5 text-[13px] rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none" />
       </div>
-      <div class="flex items-center justify-between">
-        <label class="flex items-center gap-2 text-[12px] font-semibold text-slate-600 cursor-pointer select-none">
+      <div class="flex items-center gap-2">
+        <label class="flex items-center gap-2 text-[12px] font-semibold text-slate-600 cursor-pointer select-none shrink-0">
           <input id="select-all" type="checkbox" class="gi-cb h-4 w-4 rounded border-slate-300" />
           Select all
         </label>
-        <span id="sel-count" class="text-[11px] text-slate-500 tabular-nums"></span>
+        <span id="sel-count" class="text-[11px] text-slate-500 tabular-nums ml-auto truncate"></span>
+        <button id="btn-delete-selected" type="button" class="btn btn-danger h-6 px-1.5 text-[11px] shrink-0"
+          title="Delete every ticked borehole (imported holes are removed permanently, seed holes are taken off the list until “Reset to seed data”)"
+          aria-label="Delete selected boreholes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path><path d="M10 11v6M14 11v6"></path>
+          </svg>
+          Delete
+        </button>
       </div>
     </div>
 
@@ -193,8 +201,8 @@
     <section class="flex-1 min-h-0 flex flex-col bg-white">
       <div id="chart-header" class="px-3 py-1.5 border-b border-slate-200 bg-white flex items-center gap-3 text-[11px]">
         <div class="min-w-0 shrink-0">
-          <p id="chart-title" class="text-[11.5px] font-extrabold tracking-[.06em] text-slate-900 leading-tight">SUBSURFACE BENCHMARKING PROFILE</p>
-          <p class="text-[9.5px] text-slate-500 leading-tight">Grouped by borehole · one strip bar per track · Reduced Level (mPD), higher elevation to the left</p>
+          <p id="chart-title" class="text-[11.5px] font-extrabold tracking-[.06em] text-slate-900 leading-tight">GI DASHBOARD</p>
+          <p class="text-[9.5px] text-slate-500 leading-tight">Subsurface benchmarking profile · grouped by borehole · one strip bar per track · Reduced Level (mPD), higher elevation to the left</p>
         </div>
         <span id="chart-header-log" class="truncate text-slate-700 font-semibold"></span>
         <span id="chart-header-cal" class="ml-auto shrink-0 text-slate-500 tabular-nums"></span>
@@ -237,6 +245,7 @@
           <button id="btn-clear-key" type="button" class="btn btn-danger px-2.5 py-1 text-[12px]">Clear</button>
           <span id="key-status" class="text-[11.5px] text-slate-500"></span>
         </div>
+        <p id="key-hint" class="text-[11.5px] text-slate-500 mt-2"></p>
       </section>
 
       <section>
@@ -507,7 +516,7 @@
    ------------------------------------------------------------------------- */
 const GRADE_COLOURS = {
   'FILL': '#e0d7ce',
-  'Grade VI / Soil': '#bcaaa4',
+  'Grade VI': '#bcaaa4',
   'Grade V': '#ffb74d',
   'Grade IV': '#ff7043',
   'Grade III/IV': '#ff7043',      // same decomposition class as IV/III
@@ -526,29 +535,41 @@ const QUANT_SCALE = [
 ];
 const QUANT_NONE = '#eceff1';
 
-/** Decomposition wording shown under each grade swatch in the legend. */
+/**
+ * Hong Kong decomposition-grade wording (Geoguide 3 descriptors), shown under
+ * each grade swatch in the legend and used for in-app tooltips:
+ *   FILL → Fill / Made Ground · VI → Residual Soil · V → Completely Decomposed
+ *   IV → Highly Decomposed · III → Moderately Decomposed
+ *   II → Slightly Decomposed · I → Fresh
+ */
 const GRADE_DESCRIPTORS = {
-  'FILL': 'Made ground',
-  'Grade VI / Soil': 'Decomposed',
-  'Grade V': 'Highly decomposed',
-  'Grade IV': 'Mod. decomposed',
-  'Grade III/IV': 'Mod. decomposed',
-  'Grade IV/III': 'Mod. decomposed',
-  'Grade III': 'Mod. decomposed',
-  'Grade II': 'Bedrock',
-  'Grade I': 'Bedrock (fresh)'
+  'FILL': 'Fill / Made Ground',
+  'Grade VI': 'Residual Soil',
+  'Grade V': 'Completely Decomposed',
+  'Grade IV': 'Highly Decomposed',
+  'Grade III/IV': 'Moderately to Highly Decomposed',
+  'Grade IV/III': 'Highly to Moderately Decomposed',
+  'Grade III': 'Moderately Decomposed',
+  'Grade II': 'Slightly Decomposed',
+  'Grade I': 'Fresh'
 };
 
 /** Legend order, weakest material first (FILL → Grade I). */
-const GRADE_ORDER = ['FILL', 'Grade VI / Soil', 'Grade V', 'Grade IV', 'Grade III/IV',
+const GRADE_ORDER = ['FILL', 'Grade VI', 'Grade V', 'Grade IV', 'Grade III/IV',
                      'Grade IV/III', 'Grade III', 'Grade II', 'Grade I'];
+
+/** Titles of the two legend blocks, shared by the on-screen legend and the PDF. */
+const LEGEND_TITLES = {
+  grade: '[1] CLASSIFICATION OF DECOMPOSITION GRADES',
+  quant: '[2] QUANTITATIVE PARAMETER COLOR SCALE (TCR / SCR / RQD / FI)'
+};
 
 const DEFAULT_THRESHOLDS = {
   version: 1,
   grade: {
     colours: {
       'FILL': GRADE_COLOURS['FILL'],
-      'Grade VI / Soil': GRADE_COLOURS['Grade VI / Soil'],
+      'Grade VI': GRADE_COLOURS['Grade VI'],
       'Grade V': GRADE_COLOURS['Grade V'],
       'Grade IV': GRADE_COLOURS['Grade IV'],
       'Grade III/IV': GRADE_COLOURS['Grade III/IV'],
@@ -724,7 +745,12 @@ function isNaVal(v) {
   return NA_TOKENS.indexOf(String(v).trim().toLowerCase()) !== -1;
 }
 
-/** Canonical grade label: "FILL" | "Grade II" | "Grade III" | "Grade III/IV" | "Grade IV/III" | … */
+/**
+ * Canonical grade label: "FILL" | "Grade VI" | "Grade V" | "Grade IV" |
+ * "Grade III" | "Grade II" | "Grade I" | "Grade III/IV" | … Spatial variants
+ * ("VI/Soil", "Residual Soil", "Made Ground", roman or arabic numerals,
+ * OCR-style spacing) all collapse onto the same label.
+ */
 function canonGrade(g) {
   if (isNaVal(g)) return '';
   const s = String(g).trim().replace(/\s+/g, ' ').replace(/^grade[ .]*/i, '').toUpperCase();
@@ -735,8 +761,8 @@ function canonGrade(g) {
   if (/^(III|3)$/.test(s)) return 'Grade III';
   if (/^(IV|4)$/.test(s)) return 'Grade IV';
   if (/^(V|5)$/.test(s)) return 'Grade V';
-  if (/^(VI|6)(\s*\/\s*SOIL)?$/.test(s)) return 'Grade VI / Soil';   // VI, 6, VI/Soil
-  if (/^(SOIL|RESIDUAL SOIL|RESIDUAL|TOPSOIL)$/.test(s)) return 'Grade VI / Soil';
+  if (/^(VI|6)(\s*\/\s*SOIL)?$/.test(s)) return 'Grade VI';   // VI, 6, VI/Soil
+  if (/^(SOIL|RESIDUAL SOIL|RESIDUAL|TOPSOIL)$/.test(s)) return 'Grade VI';
   if (/^(VII|7)$/.test(s)) return 'Grade VII';
   return 'Grade ' + s;   // e.g. "Grade III/IV", "Grade II/III" — kept verbatim
 }
@@ -763,6 +789,27 @@ function colourForGrade(g) {
   const c = canonGrade(g);
   if (!c) return t.grade.unknown;
   return gradePaletteLookup(t.grade.colours, c) || t.grade.unknown;
+}
+
+/**
+ * Hong Kong decomposition wording for a grade value — "Grade IV" → "Highly
+ * Decomposed". Used by the legend notes and any tooltip that names a grade.
+ */
+function gradeDescriptor(g) {
+  const c = canonGrade(g);
+  if (!c) return '';
+  if (GRADE_DESCRIPTORS[c]) return GRADE_DESCRIPTORS[c];
+  const key = Object.keys(GRADE_DESCRIPTORS).filter(function (k) {
+    return k.toLowerCase().replace(/\s+/g, '') === c.toLowerCase().replace(/\s+/g, '');
+  })[0];
+  return key ? GRADE_DESCRIPTORS[key] : '';
+}
+
+/** "Grade IV — Highly Decomposed" (or just the grade when it is unrecognised). */
+function gradeWithDescriptor(g) {
+  const label = canonGrade(g) || String(g === null || g === undefined ? '' : g).trim();
+  const note = gradeDescriptor(label);
+  return note && note !== label ? label + ' — ' + note : label;
 }
 
 /** TCR %: contract bands (≥95 / 85–94 / <85, 0 and N/A grey). */
@@ -1126,7 +1173,7 @@ function relativeLuminance(hex) {
  * Auto-contrast for in-bar labels: white on dark colours, dark grey on
  * pastel / light ones. The 0.40 luminance cut classifies the FILL cream, the
  * light quantitative greens/ambers and the "non-intact" slate as LIGHT and the
- * bedrock blues / orange-reds as DARK.
+ * Grade I / II blues, oranges and orange-reds as DARK.
  */
 function contrastTextOn(hex) {
   return relativeLuminance(hex) > CONTRAST_LUMINANCE_THRESHOLD ? CONTRAST_DARK : CONTRAST_LIGHT;
@@ -1645,6 +1692,25 @@ const OPENROUTER = {
 };
 
 /**
+ * OpenRouter keys look like sk-or-v1- followed by 64 hex characters. Used to
+ * warn (never to block) when a built-in or pasted key looks truncated, which is
+ * an easy copy/paste mistake.
+ */
+function openRouterKeyShape(key) {
+  const k = String(key === null || key === undefined ? '' : key).trim();
+  if (!k) return 'empty';
+  const body = k.replace(/^sk-or-v1-/i, '');
+  if (!/^[0-9a-f]+$/i.test(body)) return 'not-hex';
+  if (body.length === 64) return 'complete';
+  return body.length < 64 ? 'truncated' : 'overlong';
+}
+
+/** Convenience boolean for the settings wording. */
+function openRouterKeyLooksComplete(key) {
+  return openRouterKeyShape(key) === 'complete';
+}
+
+/**
  * Builds the OpenAI-compatible multimodal request:
  *   { url, headers, body } with body.messages = [system, user[text, image_url]]
  * `dataUrl` is a full data: URL (e.g. data:image/jpeg;base64,…), which is what
@@ -1998,6 +2064,17 @@ function buildSelfTests(opts) {
   });
   eq('openrouter', 'endpoint URL', req.url, 'https://openrouter.ai/api/v1/chat/completions');
   eq('openrouter', 'Authorization header', req.headers['Authorization'], 'Bearer sk-or-v1-test');
+  eq('openrouter', 'key shape: a full 64-hex key is complete',
+     openRouterKeyShape('sk-or-v1-' + 'a'.repeat(64)), 'complete');
+  eq('openrouter', 'key shape: a short paste reports truncated',
+     openRouterKeyShape('sk-or-v1-' + 'a'.repeat(56)), 'truncated');
+  eq('openrouter', 'key shape: a non-hex body reports not-hex',
+     openRouterKeyShape('sk-or-v1-' + 'z'.repeat(64)), 'not-hex');
+  eq('openrouter', 'key shape: blank and missing keys report empty',
+     openRouterKeyShape('') + '/' + openRouterKeyShape(null), 'empty/empty');
+  ok('openrouter', 'key shape boolean matches the shape helper',
+     openRouterKeyLooksComplete('sk-or-v1-' + 'f'.repeat(64)) && !openRouterKeyLooksComplete('sk-or-v1-abc'),
+     'complete check');
   eq('openrouter', 'Content-Type header', req.headers['Content-Type'], 'application/json');
   eq('openrouter', 'HTTP-Referer header', req.headers['HTTP-Referer'], 'http://localhost');
   eq('openrouter', 'X-Title header', req.headers['X-Title'], 'GI Dashboard');
@@ -2096,7 +2173,7 @@ function buildSelfTests(opts) {
   eq('contrast', 'dark text on the FILL cream', contrastTextOn('#e0d7ce'), '#1f2937');
   eq('contrast', 'dark text on the decomposed greige', contrastTextOn('#bcaaa4'), '#1f2937');
   eq('contrast', 'white text on the Grade I blue', contrastTextOn('#1e88e5'), '#ffffff');
-  eq('contrast', 'white text on the Bedrock blue', contrastTextOn('#42a5f5'), '#ffffff');
+  eq('contrast', 'white text on the Grade II blue', contrastTextOn('#42a5f5'), '#ffffff');
   eq('contrast', 'white text on the orange-red Grade IV/III', contrastTextOn('#ff7043'), '#ffffff');
   eq('contrast', 'dark text on the light quantitative greens', contrastTextOn('#c8e6c9'), '#1f2937');
   eq('contrast', 'dark text on the amber fair band', contrastTextOn('#ffe082'), '#1f2937');
@@ -2128,9 +2205,13 @@ function buildSelfTests(opts) {
   eq('legend', '[1] strata grade rows are deduped by colour', String(gradeRows.length), '7');
   eq('legend', '[1] runs FILL → Grade I', gradeRows[0].label + '…' + gradeRows[6].label, 'FILL…Grade I');
   eq('legend', '[1] FILL swatch is the deliverable cream', gradeRows[0].colour, '#e0d7ce');
-  eq('legend', '[1] Bedrock wording is present',
-     gradeRows[5].note + '/' + gradeRows[6].note, 'Bedrock/Bedrock (fresh)');
-  eq('legend', '[1] Mod. decomposed wording is present', gradeRows[3].note, 'Mod. decomposed');
+  eq('legend', '[1] rows carry the Geoguide decomposition wording',
+     gradeRows.map(function (r) { return r.note; }).join(' / '),
+     'Fill / Made Ground / Residual Soil / Completely Decomposed / Highly Decomposed / ' +
+     'Moderately Decomposed / Slightly Decomposed / Fresh');
+  eq('legend', '[1] title is the renamed block', LEGEND_TITLES.grade, '[1] CLASSIFICATION OF DECOMPOSITION GRADES');
+  eq('legend', '[2] title is unchanged', LEGEND_TITLES.quant,
+     '[2] QUANTITATIVE PARAMETER COLOR SCALE (TCR / SCR / RQD / FI)');
   const quantRows = quantScaleRows(defaultThresholds());
   eq('legend', '[2] is a five-class scale', quantRows.map(function (r) { return r.key; }).join(','),
      'excellent,good,fair,poor,none');
@@ -2149,6 +2230,27 @@ function buildSelfTests(opts) {
   eq('legend', 'range text for a middle band', trackRangeText([{ min: 95 }, { min: 85 }, { min: 0 }], 1), '85–95');
   eq('legend', 'range text for the bottom band', trackRangeText([{ min: 95 }, { min: 85 }, { min: 0 }], 2), '<85');
   eq('legend', 'strict bands print with >', trackRangeText([{ min: 5, strict: true }, { min: 0 }], 0), '>5');
+
+  /* --- Geoguide decomposition wording (FR-025) --- */
+  eq('wording', 'FILL reads as fill / made ground', gradeDescriptor('Fill'), 'Fill / Made Ground');
+  eq('wording', 'Grade VI collapses to one label',
+     canonGrade('Soil') + '|' + canonGrade('Grade VI / Soil') + '|' + canonGrade('residual soil'),
+     'Grade VI|Grade VI|Grade VI');
+  eq('wording', 'Grade VI is residual soil', gradeDescriptor('residual'), 'Residual Soil');
+  eq('wording', 'Grade V is completely decomposed', gradeDescriptor('Grade 5'), 'Completely Decomposed');
+  eq('wording', 'Grade IV is highly decomposed', gradeDescriptor('GRADE IV'), 'Highly Decomposed');
+  eq('wording', 'Grade III is moderately decomposed', gradeDescriptor('III'), 'Moderately Decomposed');
+  eq('wording', 'Grade II is slightly decomposed', gradeDescriptor('2'), 'Slightly Decomposed');
+  eq('wording', 'Grade I is fresh', gradeDescriptor('I'), 'Fresh');
+  eq('wording', 'gradeWithDescriptor pairs the two', gradeWithDescriptor('Grade IV'), 'Grade IV — Highly Decomposed');
+  eq('wording', 'an unstated grade has no descriptor', gradeDescriptor(''), '');
+  ok('wording', 'the old bedrock / "Mod. decomposed" wording is gone',
+     ['Bedrock', 'Mod. decomposed', 'Made ground'].every(function (bad) {
+       return JSON.stringify(GRADE_DESCRIPTORS).indexOf(bad) === -1;
+     }), 'clean');
+  eq('wording', 'grade colours survive the VI rename',
+     [colourForGrade('Grade VI'), colourForGrade('VI/Soil'), colourForGrade('Soil')].join(','),
+     '#bcaaa4,#bcaaa4,#bcaaa4');
 
 
   /* --- shareable view state (FR-021) --- */
@@ -2235,6 +2337,32 @@ const LS = {
   MODEL: 'gi.openrouter.model'
 };
 
+/**
+ * Storage keys older builds used for imported / custom boreholes. They are
+ * purged by "New Page" so a stale key can never resurrect a deleted hole.
+ */
+const LEGACY_HOLE_KEYS = ['gi_custom_holes', 'gi_imported_holes', 'gi.customHoles.v1', 'gi.importedHoles.v1'];
+
+/**
+ * Built-in team key — used automatically whenever this browser has no personal
+ * key saved, so the dashboard works out of the box without any setup.
+ *
+ * NOTE: it ships in the page source, so anyone who can open the file can read
+ * it. Put a personal key in Settings to override it (nothing else changes), and
+ * for anything beyond a trusted team use a server-side proxy instead.
+ */
+const DEFAULT_OPENROUTER_KEY = 'sk-or-v1-7cd4f16d1f16c32b2c80d3f4ac8f288f8cc6a2fbcd4cb38db473f0c8';
+
+/** The key actually sent to OpenRouter: the personal one, else the team key. */
+function currentApiKey() {
+  return (state.apiKey || '').trim() || DEFAULT_OPENROUTER_KEY;
+}
+
+/** True when no personal key is stored and the built-in team key is in use. */
+function usingBuiltInKey() {
+  return !(state.apiKey || '').trim();
+}
+
 /* OpenRouter transport. Slugs verified against GET https://openrouter.ai/api/v1/models
    and both accept image input. The app walks the list if a model returns "not found". */
 const OPENROUTER_MODELS = ['google/gemini-2.5-flash', 'google/gemini-2.5-pro', 'openai/gpt-4o-mini'];
@@ -2277,7 +2405,9 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length) data = parsed;
+      /* An EMPTY array is a legitimate workspace (every hole deleted), so only
+         unparseable / non-array content falls back to the seed data. */
+      if (Array.isArray(parsed)) data = parsed;
     } catch (e) {
       console.warn('Stored dataset was not valid JSON — restoring the seed data.', e);
     }
@@ -2528,6 +2658,8 @@ function wireSidebar() {
     scheduleRender();
   });
 
+  $('btn-delete-selected').addEventListener('click', deleteSelected);
+
   $('btn-fit').addEventListener('click', function () { fitToSelection(true); });
 }
 /* ================================ MAP ===================================== */
@@ -2666,7 +2798,7 @@ function fitToSelection(userInitiated) {
 
 /**
  * The two-part legend block the deliverable calls for:
- *   [1] geological strata grade   [2] the shared quantitative colour scale.
+ *   [1] classification of decomposition grades   [2] the quantitative colour scale.
  * Both halves are generated from the ACTIVE thresholds, so editing a band in
  * Settings → Legend thresholds immediately changes what the legend shows.
  */
@@ -2685,15 +2817,16 @@ function renderLegend() {
     return '<section class="gi-legend-block"' + (hint ? ' title="' + esc(hint) + '"' : '') + '>' +
       '<p class="gi-legend-title">' + esc(title) + '</p>' +
       '<ul class="gi-legend-rows">' + rows.map(function (r) {
-        return '<li><span class="swatch" style="background:' + r.colour + '"></span>' +
+        return '<li title="' + esc(r.label + (r.note ? ' — ' + r.note : '')) + '">' +
+          '<span class="swatch" style="background:' + r.colour + '"></span>' +
           '<span class="gi-legend-name">' + esc(r.label) + '</span>' +
           (r.note ? '<span class="gi-legend-note">' + esc(r.note) + '</span>' : '') + '</li>';
       }).join('') + '</ul></section>';
   };
   host.innerHTML =
-    block('[1] GEOLOGICAL STRATA GRADE', grades,
-      'Contract grade palette — edit in Settings → Legend thresholds') +
-    block('[2] QUANTITATIVE PARAMETER COLOR SCALE (TCR / SCR / RQD / FI)', quant,
+    block(LEGEND_TITLES.grade, grades,
+      'Hong Kong decomposition grades (Geoguide 3 wording) — edit in Settings → Legend thresholds') +
+    block(LEGEND_TITLES.quant, quant,
       'Band colours per track — edit in Settings → Legend thresholds');
 }
 
@@ -3042,7 +3175,21 @@ function updateSettingsUI() {
     else { sel.value = '__custom'; $('model-custom').value = state.model; }
   }
   updateCalibrationUI();
-  setKeyStatus(state.apiKey ? 'Key saved in localStorage (' + maskKey(state.apiKey) + ').' : 'No key saved — PDF parsing needs an OpenRouter key (Paste JSON works without).');
+  const hint = $('key-hint');
+  if (hint) {
+    const shape = openRouterKeyShape(DEFAULT_OPENROUTER_KEY);
+    hint.innerHTML = 'Leave blank to use the <b>built-in team key</b> (' + esc(maskKey(DEFAULT_OPENROUTER_KEY)) +
+      '), which is already active — no setup needed. Paste your own key here to override it for this browser only.' +
+      ' The built-in key is readable in the page source, so treat it as shared-with-the-team, not secret.' +
+      (shape === 'complete' ? '' :
+        ' <b class="text-amber-700">⚠ The built-in key looks ' + esc(shape) +
+        ' — paste the full sk-or-v1-… key (64 hex characters) and press Save.</b>');
+  }
+  const shapeNow = openRouterKeyShape(usingBuiltInKey() ? DEFAULT_OPENROUTER_KEY : state.apiKey);
+  setKeyStatus((usingBuiltInKey()
+    ? 'Using the built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) + ') — no personal key saved.'
+    : 'Personal key saved in localStorage (' + maskKey(state.apiKey) + ').') +
+    (shapeNow === 'complete' ? '' : ' ⚠ This key looks ' + shapeNow + ' — check for a truncated paste.'));
   updateStorageInfo();
 }
 
@@ -3066,13 +3213,16 @@ function saveSettings() {
   applyCalibrationFromUI();
 
   updateSettingsUI();
-  setKeyStatus(state.apiKey ? 'Saved ✓ — key stored in localStorage (' + maskKey(state.apiKey) + '), model ' + state.model + '.' : 'Cleared. Key removed from localStorage.');
+  setKeyStatus(state.apiKey
+    ? 'Saved ✓ — personal key stored in localStorage (' + maskKey(state.apiKey) + '), model ' + state.model + '.'
+    : 'Personal key cleared — back to the built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) + '), model ' + state.model + '.');
 }
 
 async function testApiKey() {
-  const key = ($('api-key').value || '').trim();
+  const typed = ($('api-key').value || '').trim();
+  const key = typed || currentApiKey();
   if (!key) { setKeyStatus('Enter a key first.', true); return; }
-  setKeyStatus('Testing key…');
+  setKeyStatus(typed ? 'Testing the key in the box…' : 'Testing the built-in team key…');
   try {
     const res = await fetch(OPENROUTER.KEY_URL, {
       method: 'GET',
@@ -3094,9 +3244,10 @@ async function testApiKey() {
 
 function resetToSeed() {
   if (!window.confirm('Reset the dataset to the 6 seed boreholes?\n\nImported holes and their stored copy will be removed from this browser.')) return;
-  state.data = JSON.parse(JSON.stringify(SEED_DATA));
+  state.data = seedCopy();
   state.selected = new Set(state.data.map(function (h) { return h.name; }));
   state.active = null;
+  LEGACY_HOLE_KEYS.forEach(safeDel);
   save();
   renderAll();
   fitToSelection(false);
@@ -3111,7 +3262,7 @@ function wireSettings() {
     state.apiKey = '';
     safeDel(LS.API_KEY);
     updateSettingsUI();
-    setKeyStatus('Key removed from localStorage.');
+    setKeyStatus('Personal key removed — the built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) + ') is active again.');
   });
   $('btn-toggle-key').addEventListener('click', function () {
     const el = $('api-key');
@@ -3244,7 +3395,7 @@ async function renderPdfPage(file, pageNo, scale, mime) {
 /* Phase 2: ask the OpenRouter vision model about the image. */
 async function callOpenRouterModel(model, dataUrl, jsonMode) {
   const req = buildOpenRouterRequest({
-    apiKey: state.apiKey,
+    apiKey: currentApiKey(),
     model: model,
     dataUrl: dataUrl,
     systemPrompt: SYSTEM_PROMPT,
@@ -3303,7 +3454,13 @@ async function callOpenRouterWithFallback(dataUrl, onStatus) {
         lastError = e;
         const msg = String(e.message || '');
         if (e.status === 401 || e.status === 403 || /user not found|no auth credentials|invalid api key|unauthorized|insufficient credits/i.test(msg)) {
+          const used = currentApiKey();
+          const shape = openRouterKeyShape(used);
           throw new Error('The OpenRouter API key was rejected: ' + msg +
+            '\n\n' + (shape === 'complete'
+              ? 'This is the key in Settings (' + (usingBuiltInKey() ? 'built-in team key' : 'personal key') + ').'
+              : 'The active key looks ' + shape + ' (' + used.replace(/^sk-or-v1-/i, '').length +
+                ' of 64 hex characters) — copy the complete key from openrouter.ai/keys.') +
             '\n\nOpen Settings → Test key to check it. Keys look like sk-or-v1-…');
         }
         if (e.status === 429) {
@@ -3467,8 +3624,8 @@ function acceptPending() {
 /* Phase 1 + 2 orchestration. */
 async function parseWithOpenRouter() {
   if (!state.pdfFile) return;
-  if (!state.apiKey) {
-    showAddError('No OpenRouter API key is saved yet.\n\nOpen Settings (the gear icon) and paste a key (sk-or-v1-…), or use the “Paste JSON” tab to add the hole by hand.');
+  if (!currentApiKey()) {
+    showAddError('No OpenRouter API key is available.\n\nOpen Settings (the gear icon) and paste a key (sk-or-v1-…), or use the “Paste JSON” tab to add the hole by hand.');
     updateSettingsUI();
     openModal('modal-settings');
     return;
@@ -4011,23 +4168,107 @@ async function copyShareLink() {
   setTimeout(function () { const s = $('share-status'); if (s) s.textContent = ''; }, 2500);
 }
 
-/** "New Page": clears imported holes, the selection, the view hash and the chart. */
+/** A deep copy of the pristine seed dataset. */
+function seedCopy() {
+  return JSON.parse(JSON.stringify(SEED_DATA));
+}
+
+/** Holes that came from "Add GI Hole" (AI extraction or pasted JSON). */
+function importedHoles() {
+  return state.data.filter(function (h) { return h.imported; });
+}
+
+/** Holes that are part of the built-in demo set. */
+function seedHoles() {
+  return state.data.filter(function (h) { return !h.imported; });
+}
+
+/**
+ * "New Page" — clears all imported boreholes and resets the workspace:
+ *   1. every imported hole is dropped from the dataset and from
+ *      gi.boreholes.v1 (plus the legacy gi_custom_holes / gi_imported_holes keys)
+ *   2. the six seed demo holes come back unticked
+ *   3. every marker is removed from the Leaflet map (renderMap rebuilds from
+ *      the dataset) and the chart is emptied
+ *   4. the shared-view hash and the Add-GI-Hole staging area are cleared
+ * The ΔE/ΔN calibration and the legend thresholds are deliberately untouched.
+ */
 function newPage() {
-  const imported = state.data.filter(function (h) { return h.imported; });
-  if (!window.confirm('Start a new page?\n\nThis removes ' + imported.length + ' imported borehole(s), ' +
-      'unticks every hole, clears the shared-view link and redraws the chart.\n\n' +
-      'Seed demo holes are kept (unticked) and your calibration offset is not changed.')) return;
-  state.data = state.data.filter(function (h) { return !h.imported; });
-  state.selected = new Set();                      // everything unticked
+  const imported = importedHoles().length;
+  const hidden = Math.max(0, SEED_DATA.length - seedHoles().length);
+  if (!window.confirm('Are you sure you want to clear all imported boreholes and reset workspace?\n\n' +
+      'This permanently removes ' + imported + ' imported borehole(s) from this browser' +
+      (hidden ? ' and restores ' + hidden + ' seed hole(s) you had removed' : '') +
+      '.\n\nEvery hole is unticked (the chart empties), the shared-view link is cleared, and the' +
+      ' six seed demo holes are restored. Your calibration offset and legend thresholds are not changed.')) return;
+
+  state.data = seedCopy();               // clean default: seed holes only
+  state.selected = new Set();            // nothing ticked → chart shows the empty state
   state.active = null;
   if (state.map) state.map.closePopup();
+  state.search = '';
+  const search = $('search');
+  if (search) search.value = '';
+
+  /* Wipe the stored copies: the live dataset, the selection and every legacy
+     imported-hole key, so nothing can come back on the next load. */
+  safeDel(LS.BOREHOLES);
   safeDel(LS.SELECTED);
+  LEGACY_HOLE_KEYS.forEach(safeDel);
   save();
+
   window.location.hash = '';
   closeModal('modal-share');
   resetAddModal();
   renderAll();
-  showBanner('New page - ' + imported.length + ' imported hole(s) cleared, nothing ticked.');
+  fitToSelection(false);
+  showBanner('Workspace reset — ' + imported + ' imported hole(s) cleared, ' +
+    state.data.length + ' seed hole(s) restored, nothing ticked.');
+}
+
+/** Transient toast: same banner surface, but it clears itself. */
+let _toastTimer = null;
+function showToast(msg, ms) {
+  showBanner(msg);
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function () {
+    _toastTimer = null;
+    const el = $('map-banner');
+    if (el) el.classList.add('hidden');
+  }, ms === undefined ? 4000 : ms);
+}
+
+/**
+ * "Delete" — removes every ticked borehole.
+ *   • imported / custom holes are deleted permanently (dataset + localStorage)
+ *   • seed holes are taken off the active list; "Reset to seed data" brings the
+ *     demo set back
+ * Their markers disappear with the next render and the chart is redrawn.
+ */
+function deleteSelected() {
+  const names = Array.from(state.selected);
+  if (!names.length) { showToast('No boreholes selected — tick the ones to delete.'); return; }
+  const byName = {};
+  state.data.forEach(function (h) { byName[h.name] = h; });
+  const doomed = names.filter(function (n) { return !!byName[n]; });
+  if (!doomed.length) { showToast('No boreholes selected — tick the ones to delete.'); return; }
+
+  const imported = doomed.filter(function (n) { return byName[n].imported; }).length;
+  const seeds = doomed.length - imported;
+
+  state.data = state.data.filter(function (h) { return doomed.indexOf(h.name) === -1; });
+  doomed.forEach(function (n) { state.selected.delete(n); });
+  if (doomed.indexOf(state.active) !== -1) state.active = null;
+  if (state.map) state.map.closePopup();
+
+  safeDel(LS.SELECTED);            // the unticked set is re-saved below, this drops stale names
+  LEGACY_HOLE_KEYS.forEach(safeDel);
+  save();
+  renderAll();
+
+  showToast('Deleted ' + doomed.length + ' selected borehole' + (doomed.length === 1 ? '' : 's') + '.' +
+    (imported ? ' ' + imported + ' imported removed permanently' : '') +
+    (seeds ? ' · ' + seeds + ' seed hole(s) off the list (Reset to seed data to restore)' : '') + '.');
 }
 
 /* ====================== MULTI-PAGE PDF REPORT (A4 landscape) ============= */
@@ -4230,15 +4471,26 @@ function inspectRowAction(kind, group, rowIndex) {
 
 const SHEET_FONT = 'system-ui, "Segoe UI", Roboto, Arial, sans-serif';
 
+/**
+ * Page-2 sheet layout, expressed in MILLIMETRES so the print result is
+ * predictable: the sheet is W px wide and maps onto the 277 mm printable width
+ * of an A4-landscape page (297 − 2 × 10 mm margins). `chartHmm` is not fixed —
+ * the chart absorbs whatever is left of the page after the header, the legend
+ * band, the footer and the required bottom clearance.
+ */
 const PDF_PROFILE = {
-  sheetWidth: 2500,       // px width of the composed sheet (A4-landscape ratio)
-  barThickness: 22,       // thicker strips for print legibility
+  sheetWidth: 2500,        // px; aspect is solved for the A4 text box below
+  printableWidthMm: 277,   // A4 landscape width minus 10 mm margins
+  printAspect: 277 / 165,  // A4 text-box aspect used to solve the sheet height
+  barThickness: 22,        // thicker strips for print legibility
   fontScale: 1.45,
-  headerHeight: 150,
-  legendHeight: 320,
-  footerHeight: 48,
-  gap: 18,
-  minChartHeight: 820
+  headerHmm: 15,           // title header band
+  legendHmm: 34,           // dual-legend band (5 quant rows + 8 grade rows)
+  gapMm: 3,                // chart → legend spacing
+  footerHmm: 5,            // footer note line
+  bottomMm: 8,             // mandatory clearance above the sheet edge
+  minChartMm: 70,          // never squash the chart below this
+  styleSheetPx: 1500       // reference width the old px values were tuned at
 };
 
 /**
@@ -4253,7 +4505,9 @@ async function renderProfileImage(holes, opts) {
   const barThickness = o.barThickness || PDF_PROFILE.barThickness;
   const margins = o.margins || profileMargins(width, fontScale);
   const geo = profileChartGeometry(holes.length, { barThickness: barThickness, margins: margins });
-  const height = Math.max(PDF_PROFILE.minChartHeight, geo.height);
+  /* The caller may dictate the exact height (the sheet does, to fill the A4
+     text box), otherwise the geometry decides and we only enforce a minimum. */
+  const height = Math.max(200, Math.round(o.height || Math.max(820, geo.height)));
   const fig = buildProfileFigure(holes, {
     width: width, barThickness: barThickness, fontScale: fontScale, margins: margins, height: height
   });
@@ -4294,72 +4548,135 @@ function drawSheetSwatch(ctx, x, y, w, h, colour) {
 }
 
 /**
- * Draws the dual legend band on the sheet: strata grade on the left, the shared
- * quantitative scale on the right. Row data comes from the same helpers the
- * on-screen legend uses, so the two can never drift apart.
+ * Draws the dual legend band on the sheet: decomposition grades (left) and the
+ * quantitative scale (right). Type is sized in POINTS (8 pt titles, 7.5 pt
+ * names, 7 pt values) with tight 3.4 mm rows so all five quantitative lines and
+ * all seven grade lines fit inside their boxes without clipping. Any line that
+ * is still too wide is shrunk (down to 6 pt) and finally ellipsised, so nothing
+ * can ever spill past the box border or off the canvas.
+ * Row data comes from the same helpers the on-screen legend uses.
  */
 function drawSheetLegend(ctx, box) {
   const t = activeThresholds();
-  const grades = gradeLegendRows(t);
-  const quant = quantScaleRows(t);
-  const u = box.scale || 1;
-  const titlePx = Math.round(22 * u);
-  const rowPx = Math.round(20 * u);
-  const notePx = Math.round(18 * u);
-  const rowH = Math.round(34 * u);
-  const gap = Math.round(24 * u);
-  const pad = Math.round(16 * u);
+  const grades = gradeLegendRows(t).map(function (r) {
+    return { label: r.label, colour: r.colour, note: r.note || '' };
+  });
+  const quant = quantScaleRows(t).map(function (r) {
+    return {
+      label: r.label, colour: r.colour, colon: true,
+      note: (r.parts || []).map(function (p) { return p.track + ' ' + p.text; }).join('  ')
+    };
+  });
+  const mm = box.mm, pt = box.pt;
+  const pad = mm(3);
+  const gap = mm(4);
   const panelW = (box.w - gap) / 2;
+  const titlePx = pt(8);
+  const namePx = pt(7.5);
+  const notePx = pt(7);
+  const minNotePx = pt(6);
+  const rowH = mm(3.4);
+  const swatchW = mm(3.6), swatchH = mm(1.9);
+
+  /** Sets `weight size` and measures the text width. */
+  const measure = function (text, size, weight) {
+    ctx.font = (weight || '400') + ' ' + size + 'px ' + SHEET_FONT;
+    return ctx.measureText(text).width;
+  };
+
+  /** Shrinks the font until `text` fits in `maxW` (never below `minSize`). */
+  const fitSize = function (text, startSize, minSize, maxW, weight) {
+    let size = startSize;
+    while (size > minSize && measure(text, size, weight) > maxW) size -= 0.25;
+    return size;
+  };
 
   const panel = function (x, title, rows, cols, noteFor) {
-    roundRectPath(ctx, x, box.y, panelW, box.h, 10 * u);
+    roundRectPath(ctx, x, box.y, panelW, box.h, mm(1.4));
     ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = Math.max(1, mm(0.25));
+    ctx.strokeStyle = '#cbd5e1';
     ctx.stroke();
+
+    const innerW = panelW - pad * 2;
     ctx.fillStyle = '#0f172a';
-    ctx.font = '700 ' + titlePx + 'px ' + SHEET_FONT;
+    ctx.font = '700 ' + fitSize(title, titlePx, pt(6.5), innerW, '700') + 'px ' + SHEET_FONT;
     ctx.fillText(title, x + pad, box.y + pad + titlePx * 0.85);
-    const colW = (panelW - pad * 2) / cols;
+
+    const colW = innerW / cols;
+    const top = box.y + pad + titlePx * 1.45;
     rows.forEach(function (r, i) {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const rx = x + pad + col * colW;
-      const ry = box.y + pad + titlePx * 1.6 + row * rowH;
-      drawSheetSwatch(ctx, rx, ry, 30 * u, 17 * u, r.colour);
+      const baseline = top + row * rowH + rowH * 0.72;
+      const textX = rx + swatchW + mm(1.6);
+      const avail = colW - swatchW - mm(1.6) - mm(1.5);
+
+      drawSheetSwatch(ctx, rx, baseline - swatchH * 0.82, swatchW, swatchH, r.colour);
+
+      const nameSize = fitSize(r.label, namePx, pt(6), avail * 0.55, '700');
+      const nameW = measure(r.label, nameSize, '700');
       ctx.fillStyle = '#334155';
-      ctx.font = '700 ' + rowPx + 'px ' + SHEET_FONT;
-      ctx.fillText(r.label, rx + 40 * u, ry + 15 * u);
-      const note = noteFor(r);
-      if (note) {
-        const labelW = ctx.measureText(r.label).width;
-        ctx.fillStyle = '#64748b';
-        ctx.font = '400 ' + notePx + 'px ' + SHEET_FONT;
-        ctx.fillText(note, rx + 52 * u + labelW, ry + 15 * u);
+      ctx.font = '700 ' + nameSize + 'px ' + SHEET_FONT;
+      ctx.fillText(r.label, textX, baseline);
+
+      let note = noteFor(r);
+      if (!note) return;
+      if (r.colon) note = ': ' + note;
+      const noteX = textX + nameW + mm(0.6);
+      const noteAvail = rx + colW - noteX - mm(0.5);
+      if (noteAvail < mm(6)) return;                         // no room left on this row
+      const noteSize = fitSize(note, notePx, minNotePx, noteAvail, '400');
+      ctx.font = '400 ' + noteSize + 'px ' + SHEET_FONT;
+      let text2 = note;
+      if (measure(text2, noteSize, '400') > noteAvail) {     // last resort: trim
+        while (text2.length > 4 && measure(text2 + '…', noteSize, '400') > noteAvail) text2 = text2.slice(0, -1);
+        text2 += '…';
       }
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(text2, noteX, baseline);
     });
   };
 
-  panel(box.x, '[1] GEOLOGICAL STRATA GRADE', grades, grades.length > 4 ? 2 : 1,
-    function (r) { return r.note || ''; });
-  panel(box.x + panelW + gap, '[2] QUANTITATIVE PARAMETER COLOR SCALE (TCR / SCR / RQD / FI)', quant, 1,
-    function (r) { return (r.parts || []).map(function (p) { return p.track + ' ' + p.text; }).join('   '); });
+  panel(box.x, LEGEND_TITLES.grade, grades, grades.length > 4 ? 2 : 1,
+    function (r) { return r.note; });
+  panel(box.x + panelW + gap, LEGEND_TITLES.quant, quant, 1,
+    function (r) { return r.note; });
 }
 
 /**
- * Composes the A4-landscape profile sheet: engineering title header, the
- * high-resolution benchmarking chart, the dual legend and a footer note.
+ * Composes the A4-landscape sheet for PDF page 2: GI Dashboard title header, the
+ * high-resolution profile chart, the dual legend band and a footer note.
+ *
+ * The layout is solved in millimetres against the 277 × 165 mm A4 text box, and
+ * the required 8 mm clearance above the sheet edge is reserved up front, so the
+ * legend boxes can never be clipped by the canvas or the printer margin.
  */
 async function buildProfileSheet(holes, opts) {
-  const chart = await renderProfileImage(holes, opts);
-  const W = chart.width;
-  const u = (W / PDF_PROFILE.sheetWidth) * 0.8;
-  const pad = Math.round(52 * u);
-  const headerH = Math.round(PDF_PROFILE.headerHeight * u);
-  const legendH = Math.round(PDF_PROFILE.legendHeight * u);
-  const footerH = Math.round(PDF_PROFILE.footerHeight * u);
-  const H = headerH + chart.height + legendH + footerH + PDF_PROFILE.gap;
+  const o = opts || {};
+  const W = Math.round(o.width || PDF_PROFILE.sheetWidth);
+  const pxPerMm = W / PDF_PROFILE.printableWidthMm;
+  const mm = function (v) { return v * pxPerMm; };
+  const pt = function (v) { return (v * 25.4 / 72) * pxPerMm; };
+
+  const pad = mm(5.5);
+  const headerH = mm(PDF_PROFILE.headerHmm);
+  const legendH = mm(PDF_PROFILE.legendHmm);
+  const gap = mm(PDF_PROFILE.gapMm);
+  const footerH = mm(PDF_PROFILE.footerHmm);
+  const bottom = mm(PDF_PROFILE.bottomMm);
+
+  /* The chart takes the space left over in the A4 text box, so the printed
+     sheet fills the page without being scaled down by the aspect solver. */
+  const targetH = Math.round(W / PDF_PROFILE.printAspect);
+  const chartH = Math.max(mm(PDF_PROFILE.minChartMm), targetH - headerH - legendH - gap - footerH - bottom);
+  const chart = await renderProfileImage(holes, Object.assign({}, o, { width: W, height: Math.round(chartH) }));
+
+  const chartY = headerH;
+  const legendY = chartY + chart.height + gap;
+  const H = Math.round(legendY + legendH + footerH + bottom);   // includes the mandatory clearance
 
   const cv = document.createElement('canvas');
   cv.width = W;
@@ -4367,33 +4684,33 @@ async function buildProfileSheet(holes, opts) {
   const ctx = cv.getContext('2d');
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'alphabetic';
 
   const range = computeXRange(holes) || { max: 1, min: 0 };
   const step = tickStepFor(range.max - range.min);
 
-  /* ---- engineering title header ---- */
-  ctx.textBaseline = 'alphabetic';
+  /* ---- title header: GI DASHBOARD (main title) ---- */
   ctx.fillStyle = '#0f172a';
-  ctx.font = '700 ' + Math.round(56 * u) + 'px ' + SHEET_FONT;
-  ctx.fillText('SUBSURFACE BENCHMARKING PROFILE', pad, Math.round(66 * u));
+  ctx.font = '700 ' + pt(15) + 'px ' + SHEET_FONT;
+  ctx.fillText('GI DASHBOARD', pad, mm(7));
   ctx.fillStyle = '#475569';
-  ctx.font = '400 ' + Math.round(29 * u) + 'px ' + SHEET_FONT;
-  ctx.fillText('Grouped by borehole · five strip bars per hole (Geol. Grade, TCR, SCR, RQD, FI) · ' +
-    'Reduced Level (mPD), higher elevation to the left', pad, Math.round(106 * u));
+  ctx.font = '400 ' + pt(8.5) + 'px ' + SHEET_FONT;
+  ctx.fillText('Borehole subsurface benchmarking profile · grouped by borehole · five strip bars per hole ' +
+    '(Geol. Grade, TCR, SCR, RQD, FI) · Reduced Level (mPD), higher elevation on the left', pad, mm(11.6));
   ctx.textAlign = 'right';
   ctx.fillStyle = '#334155';
-  ctx.font = '600 ' + Math.round(28 * u) + 'px ' + SHEET_FONT;
-  ctx.fillText(pdfLogLine(), W - pad, Math.round(48 * u));
+  ctx.font = '600 ' + pt(8) + 'px ' + SHEET_FONT;
+  ctx.fillText(pdfLogLine(), W - pad, mm(5.6));
   ctx.fillStyle = '#64748b';
-  ctx.font = '400 ' + Math.round(25 * u) + 'px ' + SHEET_FONT;
-  ctx.fillText('Calibration dE/dN: ' + calibrationLabel(calibrationOffsets()), W - pad, Math.round(80 * u));
-  ctx.fillText('Generated: ' + formatTimestamp(new Date()), W - pad, Math.round(108 * u));
+  ctx.font = '400 ' + pt(7.5) + 'px ' + SHEET_FONT;
+  ctx.fillText('Calibration dE/dN: ' + calibrationLabel(calibrationOffsets()), W - pad, mm(9.2));
+  ctx.fillText('Generated: ' + formatTimestamp(new Date()), W - pad, mm(12.4));
   ctx.textAlign = 'left';
   ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 2 * u;
+  ctx.lineWidth = Math.max(1, mm(0.25));
   ctx.beginPath();
-  ctx.moveTo(pad, headerH - Math.round(16 * u));
-  ctx.lineTo(W - pad, headerH - Math.round(16 * u));
+  ctx.moveTo(pad, headerH - mm(1.6));
+  ctx.lineTo(W - pad, headerH - mm(1.6));
   ctx.stroke();
 
   /* ---- the profile itself (already high-resolution) ---- */
@@ -4403,23 +4720,22 @@ async function buildProfileSheet(holes, opts) {
     img.onerror = function () { reject(new Error('The rendered profile image could not be decoded.')); };
     img.src = chart.url;
   });
-  ctx.drawImage(img, 0, headerH, W, chart.height);
+  ctx.drawImage(img, 0, chartY, W, chart.height);
 
-  /* ---- dual legend band + footer ---- */
-  drawSheetLegend(ctx, {
-    x: pad, y: headerH + chart.height + PDF_PROFILE.gap / 2,
-    w: W - pad * 2, h: legendH - PDF_PROFILE.gap / 2, scale: 1.9 * u
-  });
-  const footY = H - Math.round(22 * u);
+  /* ---- dual legend band (sized in mm/pt so nothing clips) ---- */
+  drawSheetLegend(ctx, { x: pad, y: legendY, w: W - pad * 2, h: legendH, mm: mm, pt: pt });
+
+  /* ---- footer note: its own band, above the reserved bottom clearance ---- */
+  const footY = legendY + legendH + mm(3.4);
   ctx.fillStyle = '#64748b';
-  ctx.font = '400 ' + Math.round(24 * u) + 'px ' + SHEET_FONT;
+  ctx.font = '400 ' + pt(7) + 'px ' + SHEET_FONT;
   ctx.fillText('Elevation axis: mPD · one continuous axis shared by every block · dashed gridlines every ' +
     step + ' m', pad, footY);
   ctx.textAlign = 'right';
-  ctx.fillText('Sheet 2 of 2 — Subsurface Benchmarking Profile', W - pad, footY);
+  ctx.fillText('Sheet 2 of 2 — GI Dashboard', W - pad, footY);
   ctx.textAlign = 'left';
 
-  return { url: cv.toDataURL('image/png'), width: W, height: H };
+  return { url: cv.toDataURL('image/png'), width: W, height: H, legendBox: { y: legendY, h: legendH }, bottom: bottom };
 }
 
 /**
@@ -4460,11 +4776,11 @@ async function buildReportPdf() {
   doc.text(note, margin, pageH - margin + 2);
   doc.setTextColor(0);
 
-  /* ---------------- page 2: subsurface benchmarking profile ----------------
-     Composed as a single high-resolution sheet (title header + benchmarking
-     chart + dual legend + footer), so the A4 page carries the full deliverable. */
+  /* ---------------- page 2: GI Dashboard subsurface profile ----------------
+     Composed as a single high-resolution sheet (title header + profile chart +
+     dual legend + footer), so the A4 page carries the full deliverable. */
   doc.addPage('a4', 'landscape');
-  y = drawPdfTitleBlock(doc, 'GI Borehole Dashboard - Subsurface Benchmarking Profile',
+  y = drawPdfTitleBlock(doc, 'GI Dashboard - Subsurface Profile',
     [pdfLogLine(), calLine, trackLine, generated], margin);
   const sheet = await buildProfileSheet(holes);
   placePdfImage(doc, sheet.url, { x: margin, y: y, w: pageW - margin * 2, h: pageH - y - margin - 5 });
@@ -4684,6 +5000,10 @@ function init() {
     thresholds: function () { return activeThresholds(); },
     inspect: openInspector,
     validation: function () { return validationSummary(state.data); },
+    newPage: newPage,
+    deleteSelected: deleteSelected,
+    apiKey: currentApiKey,
+    usingBuiltInKey: usingBuiltInKey,
     layout: function () { return { sidebar: layout.sidebar, mapPx: layout.mapPx }; }
   };
 
