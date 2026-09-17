@@ -1711,6 +1711,38 @@ function openRouterKeyLooksComplete(key) {
 }
 
 /**
+ * Keys that shipped broken in an earlier build (a truncated 56-hex body, which
+ * OpenRouter answers with "User not found"). Stored copies of any of these are
+ * purged on load so the app falls back to the valid built-in default.
+ */
+const BROKEN_DEFAULT_KEYS = [
+  'sk-or-v1-7cd4f16d1f16c32b2c80d3f4ac8f288f8cc6a2fbcd4cb38db473f0c8'
+];
+
+/**
+ * True when a SAVED key cannot possibly authenticate and should be discarded in
+ * favour of the built-in key:
+ *   • an exact known-broken value from an earlier build, or
+ *   • any sk-or-v1-… key whose hex body is shorter than the 64 characters
+ *     OpenRouter issues (a truncated paste).
+ * Anything else — including an unrecognised prefix such as a future sk-or-v2-…
+ * — is left alone, so an unknown-but-valid format is never thrown away.
+ */
+function apiKeyIsUnusable(key) {
+  const k = String(key === null || key === undefined ? '' : key).trim();
+  if (!k) return false;                                  // nothing stored
+  if (BROKEN_DEFAULT_KEYS.indexOf(k.toLowerCase()) !== -1) return true;
+  const m = /^sk-or-v1-([0-9a-f]+)$/i.exec(k);
+  return !!m && m[1].length < 64;
+}
+
+/** True when the stored key is fine to use as-is. */
+function apiKeyIsUsable(key) {
+  const k = String(key === null || key === undefined ? '' : key).trim();
+  return !!k && !apiKeyIsUnusable(k);
+}
+
+/**
  * Builds the OpenAI-compatible multimodal request:
  *   { url, headers, body } with body.messages = [system, user[text, image_url]]
  * `dataUrl` is a full data: URL (e.g. data:image/jpeg;base64,…), which is what
@@ -2075,6 +2107,23 @@ function buildSelfTests(opts) {
   ok('openrouter', 'key shape boolean matches the shape helper',
      openRouterKeyLooksComplete('sk-or-v1-' + 'f'.repeat(64)) && !openRouterKeyLooksComplete('sk-or-v1-abc'),
      'complete check');
+  /* --- the truncated key an earlier build embedded must never be used --- */
+  eq('openrouter', 'the known-broken key is on the discard list',
+     BROKEN_DEFAULT_KEYS[0], 'sk-or-v1-7cd4f16d1f16c32b2c80d3f4ac8f288f8cc6a2fbcd4cb38db473f0c8');
+  eq('openrouter', 'the broken key is unusable even though it looks like a key',
+     String(apiKeyIsUnusable(BROKEN_DEFAULT_KEYS[0])), 'true');
+  eq('openrouter', 'a truncated sk-or-v1 key is unusable',
+     String(apiKeyIsUnusable('sk-or-v1-' + 'a'.repeat(56))), 'true');
+  eq('openrouter', 'a complete key is usable',
+     String(apiKeyIsUsable('sk-or-v1-' + 'a'.repeat(64))), 'true');
+  eq('openrouter', 'a complete key is not flagged',
+     String(apiKeyIsUnusable('sk-or-v1-' + 'a'.repeat(64))), 'false');
+  eq('openrouter', 'an empty value is "nothing stored", not "unusable"',
+     String(apiKeyIsUnusable('')), 'false');
+  eq('openrouter', 'an unknown future format is left alone',
+     String(apiKeyIsUnusable('sk-or-v2-' + 'a'.repeat(40))), 'false');
+  eq('openrouter', 'a non-hex body is left to the API',
+     String(apiKeyIsUnusable('sk-or-v1-not-a-hex-key')), 'false');
   eq('openrouter', 'Content-Type header', req.headers['Content-Type'], 'application/json');
   eq('openrouter', 'HTTP-Referer header', req.headers['HTTP-Referer'], 'http://localhost');
   eq('openrouter', 'X-Title header', req.headers['X-Title'], 'GI Dashboard');
@@ -2351,16 +2400,21 @@ const LEGACY_HOLE_KEYS = ['gi_custom_holes', 'gi_imported_holes', 'gi.customHole
  * it. Put a personal key in Settings to override it (nothing else changes), and
  * for anything beyond a trusted team use a server-side proxy instead.
  */
-const DEFAULT_OPENROUTER_KEY = 'sk-or-v1-7cd4f16d1f16c32b2c80d3f4ac8f288f8cc6a2fbcd4cb38db473f0c8';
+const DEFAULT_OPENROUTER_KEY = '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';
 
-/** The key actually sent to OpenRouter: the personal one, else the team key. */
+/**
+ * The key actually sent to OpenRouter: a usable personal key, else the built-in
+ * team key. A stored key that cannot possibly authenticate (the truncated key
+ * an earlier build embedded, or any short sk-or-v1-… paste) is ignored, so the
+ * app keeps working instead of failing with "User not found".
+ */
 function currentApiKey() {
-  return (state.apiKey || '').trim() || DEFAULT_OPENROUTER_KEY;
+  return apiKeyIsUsable(state.apiKey) ? state.apiKey.trim() : DEFAULT_OPENROUTER_KEY;
 }
 
-/** True when no personal key is stored and the built-in team key is in use. */
+/** True when no usable personal key is stored and the built-in key is in use. */
 function usingBuiltInKey() {
-  return !(state.apiKey || '').trim();
+  return !apiKeyIsUsable(state.apiKey);
 }
 
 /* OpenRouter transport. Slugs verified against GET https://openrouter.ai/api/v1/models
@@ -2372,6 +2426,7 @@ const PDF_WORKER_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/p
 
 const state = {
   data: [], selected: new Set(), search: '', apiKey: '', model: DEFAULT_MODEL,
+  keyMigration: '',
   map: null, mapLayerControl: null, markerLayer: null, markers: new Map(),
   pdfFile: null, pending: null, busy: false
 };
@@ -2397,7 +2452,23 @@ function safeDel(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore 
 /* ------------------------------- storage ---------------------------------- */
 
 function loadState() {
-  state.apiKey = safeGet(LS.API_KEY) || '';
+  /* Personal key. A key that cannot authenticate — the truncated 56-hex value
+     an earlier build embedded, or any short sk-or-v1-… paste — is purged here so
+     the app silently falls back to the valid built-in team key instead of
+     failing every request with "User not found". */
+  state.apiKey = (safeGet(LS.API_KEY) || '').trim();
+  state.keyMigration = '';
+  if (apiKeyIsUnusable(state.apiKey)) {
+    const wasBrokenDefault = BROKEN_DEFAULT_KEYS.indexOf(state.apiKey.toLowerCase()) !== -1;
+    state.keyMigration = wasBrokenDefault
+      ? 'The saved OpenRouter key was the truncated key from an earlier build (56 of 64 hex characters). ' +
+        'It has been removed — the built-in team key is now in use.'
+      : 'The saved OpenRouter key looks incomplete (' +
+        state.apiKey.replace(/^sk-or-v1-/i, '').length + ' of 64 hex characters). ' +
+        'It has been removed — the built-in team key is now in use.';
+    state.apiKey = '';
+    safeDel(LS.API_KEY);
+  }
   state.model = safeGet(LS.MODEL) || DEFAULT_MODEL;
 
   let data = null;
@@ -3189,7 +3260,9 @@ function updateSettingsUI() {
   setKeyStatus((usingBuiltInKey()
     ? 'Using the built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) + ') — no personal key saved.'
     : 'Personal key saved in localStorage (' + maskKey(state.apiKey) + ').') +
-    (shapeNow === 'complete' ? '' : ' ⚠ This key looks ' + shapeNow + ' — check for a truncated paste.'));
+    (state.keyMigration ? ' ⚠ ' + state.keyMigration : '') +
+    (shapeNow === 'complete' ? '' : ' ⚠ This key looks ' + shapeNow + ' — check for a truncated paste.'),
+    !!state.keyMigration);
   updateStorageInfo();
 }
 
@@ -3204,6 +3277,21 @@ function readModelFromUI() {
 function saveSettings() {
   state.apiKey = ($('api-key').value || '').trim();
   state.model = readModelFromUI();
+  /* Never store a key that cannot authenticate: keeping the built-in team key
+     working matters more than honouring a truncated paste. */
+  if (state.apiKey && apiKeyIsUnusable(state.apiKey)) {
+    const shape = openRouterKeyShape(state.apiKey);
+    state.apiKey = '';
+    safeDel(LS.API_KEY);
+    safeSet(LS.MODEL, state.model);
+    applyCalibrationFromUI();
+    updateSettingsUI();
+    setKeyStatus('✗ That key looks ' + shape + ' (' +
+      ($('api-key').value || '').replace(/^sk-or-v1-/i, '').length + ' of 64 hex characters) — it cannot' +
+      ' authenticate, so it was not saved. The built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) +
+      ') stays active.', true);
+    return;
+  }
   if (state.apiKey) safeSet(LS.API_KEY, state.apiKey); else safeDel(LS.API_KEY);
   safeSet(LS.MODEL, state.model);
 
@@ -3220,6 +3308,12 @@ function saveSettings() {
 
 async function testApiKey() {
   const typed = ($('api-key').value || '').trim();
+  if (typed && apiKeyIsUnusable(typed)) {
+    setKeyStatus('✗ That key looks ' + openRouterKeyShape(typed) + ' (' +
+      typed.replace(/^sk-or-v1-/i, '').length + ' of 64 hex characters) — copy the complete key from' +
+      ' openrouter.ai/keys. Requests are using the built-in team key meanwhile.', true);
+    return;
+  }
   const key = typed || currentApiKey();
   if (!key) { setKeyStatus('Enter a key first.', true); return; }
   setKeyStatus(typed ? 'Testing the key in the box…' : 'Testing the built-in team key…');
@@ -4978,6 +5072,12 @@ function init() {
   renderThresholdEditor();
   if (!restoreViewFromHash()) fitToSelection(false);   // a shared link wins over the default fit
 
+  /* Tell the user once if a stored key was discarded at load (see loadState). */
+  if (state.keyMigration) {
+    showBanner(state.keyMigration);
+    state.keyMigration = '';
+  }
+
   /* Small surface used by the Leaflet popup buttons and from the dev console. */
   window.__gi = {
     toggle: function (name) { setSelected(name, !state.selected.has(name)); },
@@ -5004,6 +5104,12 @@ function init() {
     deleteSelected: deleteSelected,
     apiKey: currentApiKey,
     usingBuiltInKey: usingBuiltInKey,
+    /* Mirrors Settings → Save: the single place a key is written to storage. */
+    setKey: function (k) {
+      $('api-key').value = k === null || k === undefined ? '' : String(k);
+      saveSettings();
+      return state.apiKey;
+    },
     layout: function () { return { sidebar: layout.sidebar, mapPx: layout.mapPx }; }
   };
 
