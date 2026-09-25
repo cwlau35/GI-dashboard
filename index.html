@@ -76,6 +76,17 @@
   .gi-legend-note { color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #legend { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
 
+  /* -------- compound / transitional grade chips (legend block [1]) -------- */
+  .gi-legend-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; width: 100%;
+    margin-top: 5px; padding-top: 5px; border-top: 1px dashed #e2e8f0; }
+  .gi-legend-chips-label { font-size: 10px; font-weight: 800; letter-spacing: .05em; color: #334155; margin-right: 2px; }
+  .gi-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; color: #334155;
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 9999px; padding: 1px 6px; white-space: nowrap; }
+  .gi-chip-dot { width: 8px; height: 8px; border-radius: 9999px; border: 1px solid rgba(15,23,42,.18); }
+
+  /* -------- physical data-anomaly badge (never a hard error) -------- */
+  .gi-anomaly { color: #7c2d12; background: #ffedd5; border: 1px solid #fdba74; }
+
   /* -------- resizable layout (two-axis splitters) -------- */
   .splitter { flex: none; background: #e2e8f0; position: relative; touch-action: none; z-index: 700; transition: background-color .12s ease; }
   .splitter:hover, .splitter.dragging { background: #93c5fd; }
@@ -388,6 +399,17 @@
       <section class="border-t border-slate-200 pt-4">
         <div class="flex items-center gap-2">
           <div class="flex-1">
+            <p class="font-semibold text-slate-700">AI correction memory</p>
+            <p id="memory-info" class="text-[11.5px] text-slate-500"></p>
+          </div>
+          <button id="btn-clear-memory" type="button" class="btn btn-ghost px-2.5 py-1.5 text-[12px] hidden"
+            title="Forget every learned correction rule">Clear memory</button>
+        </div>
+      </section>
+
+      <section class="border-t border-slate-200 pt-4">
+        <div class="flex items-center gap-2">
+          <div class="flex-1">
             <p class="font-semibold text-slate-700">Local dataset</p>
             <p id="settings-storage" class="text-[11.5px] text-slate-500"></p>
           </div>
@@ -474,7 +496,7 @@
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M12 18v-6M9 15h6"></path>
           </svg>
           <p class="mt-2 font-semibold text-slate-700 text-[13px]">Drop one or more borehole log PDFs here</p>
-          <p class="text-[11.5px] text-slate-500 mt-0.5">or click to choose files — each PDF is rasterised and read by an OpenRouter vision model, one file at a time (1.2 s apart, with automatic retries) to stay inside the provider's rate limits</p>
+          <p class="text-[11.5px] text-slate-500 mt-0.5">or click to choose files — each PDF is rasterised and read by an OpenRouter vision model, one file at a time (1.5 s cooldown, automatic retry) to avoid provider rate limits</p>
           <input id="pdf-input" type="file" multiple accept="application/pdf,.pdf" class="hidden" />
         </div>
         <div id="file-meta" class="hidden flex items-center gap-2 text-[12px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
@@ -615,16 +637,33 @@
      Excellent #a5d6a7 · Good #c8e6c9 · Fair/Moderate #ffe082
      Poor/Core loss #ef9a9a · Non-intact / Zero / Fill #eceff1
    ------------------------------------------------------------------------- */
+/**
+ * Sentry colour for a real-but-unrecognised grade. Never leave a strip bar
+ * unpainted: a neutral slate is used so the interval is visibly "outside the
+ * palette" instead of rendering as a blank white strip.
+ */
+const GRADE_UNKNOWN_FALLBACK = '#94a3b8';
+
 const GRADE_COLOURS = {
   'FILL': '#e0d7ce',
   'Grade VI': '#bcaaa4',
   'Grade V': '#ffb74d',
   'Grade IV': '#ff7043',
-  'Grade III/IV': '#ff7043',      // same decomposition class as IV/III
-  'Grade IV/III': '#ff7043',
   'Grade III': '#ffa726',
   'Grade II': '#42a5f5',
-  'Grade I': '#1e88e5'
+  'Grade I': '#1e88e5',
+  /* --- compound / transitional weathering grades -------------------------
+     A "III/IV" band is real logged material that is not one of the single
+     classes, so each ORDER gets its own intermediate colour. Without these the
+     strip bar had no palette entry (it fell through to the unknown colour). */
+  'Grade III/IV': '#f85a2b',      // transitional orange-red (III over IV)
+  'Grade IV/III': '#f85a2b',
+  'Grade II/III': '#0ea5e9',      // deep sky blue (II over III)
+  'Grade III/II': '#0ea5e9',
+  'Grade IV/V': '#d97706',        // amber (IV over V)
+  'Grade V/IV': '#d97706',
+  'Grade V/VI': '#b45309',        // dark amber (V over VI / soil)
+  'Grade VI/V': '#b45309'
 };
 
 const QUANT_SCALE = [
@@ -648,16 +687,29 @@ const GRADE_DESCRIPTORS = {
   'Grade VI': 'Residual Soil',
   'Grade V': 'Completely Decomposed',
   'Grade IV': 'Highly Decomposed',
-  'Grade III/IV': 'Moderately to Highly Decomposed',
-  'Grade IV/III': 'Highly to Moderately Decomposed',
   'Grade III': 'Moderately Decomposed',
   'Grade II': 'Slightly Decomposed',
-  'Grade I': 'Fresh'
+  'Grade I': 'Fresh',
+  /* Compound / transitional bands read as "top grade to lower grade". */
+  'Grade III/IV': 'Moderately to Highly Decomposed',
+  'Grade IV/III': 'Highly to Moderately Decomposed',
+  'Grade II/III': 'Slightly to Moderately Decomposed',
+  'Grade III/II': 'Moderately to Slightly Decomposed',
+  'Grade IV/V': 'Highly to Completely Decomposed',
+  'Grade V/IV': 'Completely to Highly Decomposed',
+  'Grade V/VI': 'Completely Decomposed to Residual Soil',
+  'Grade VI/V': 'Residual Soil to Completely Decomposed'
 };
 
-/** Legend order, weakest material first (FILL → Grade I). */
-const GRADE_ORDER = ['FILL', 'Grade VI', 'Grade V', 'Grade IV', 'Grade III/IV',
-                     'Grade IV/III', 'Grade III', 'Grade II', 'Grade I'];
+/** Legend order, weakest material first (FILL → Grade I), transitions in place. */
+const GRADE_ORDER = ['FILL', 'Grade VI', 'Grade V', 'Grade V/VI', 'Grade VI/V',
+                     'Grade IV', 'Grade IV/V', 'Grade V/IV',
+                     'Grade III/IV', 'Grade IV/III', 'Grade III',
+                     'Grade II/III', 'Grade III/II', 'Grade II', 'Grade I'];
+
+/** The compound / transitional grades, for the legend chip badges. */
+const COMPOUND_GRADE_ORDER = ['Grade V/VI', 'Grade VI/V', 'Grade IV/V', 'Grade V/IV',
+                              'Grade III/IV', 'Grade IV/III', 'Grade II/III', 'Grade III/II'];
 
 /** Titles of the two legend blocks, shared by the on-screen legend and the PDF. */
 const LEGEND_TITLES = {
@@ -673,13 +725,19 @@ const DEFAULT_THRESHOLDS = {
       'Grade VI': GRADE_COLOURS['Grade VI'],
       'Grade V': GRADE_COLOURS['Grade V'],
       'Grade IV': GRADE_COLOURS['Grade IV'],
-      'Grade III/IV': GRADE_COLOURS['Grade III/IV'],
-      'Grade IV/III': GRADE_COLOURS['Grade IV/III'],
       'Grade III': GRADE_COLOURS['Grade III'],
       'Grade II': GRADE_COLOURS['Grade II'],
-      'Grade I': GRADE_COLOURS['Grade I']
+      'Grade I': GRADE_COLOURS['Grade I'],
+      'Grade III/IV': GRADE_COLOURS['Grade III/IV'],
+      'Grade IV/III': GRADE_COLOURS['Grade IV/III'],
+      'Grade II/III': GRADE_COLOURS['Grade II/III'],
+      'Grade III/II': GRADE_COLOURS['Grade III/II'],
+      'Grade IV/V': GRADE_COLOURS['Grade IV/V'],
+      'Grade V/IV': GRADE_COLOURS['Grade V/IV'],
+      'Grade V/VI': GRADE_COLOURS['Grade V/VI'],
+      'Grade VI/V': GRADE_COLOURS['Grade VI/V']
     },
-    unknown: '#9e9e9e'
+    unknown: GRADE_UNKNOWN_FALLBACK
   },
   tcr: { label: 'TCR (%)', zeroIsNa: true, na: QUANT_NONE, naLabel: '0 / N/A', bands: [
     { min: 95, strict: false, colour: '#a5d6a7' },
@@ -852,10 +910,19 @@ function isNaVal(v) {
  * ("VI/Soil", "Residual Soil", "Made Ground", roman or arabic numerals,
  * OCR-style spacing) all collapse onto the same label.
  */
+/** Roman numerals for the compound-grade canoniser (arabic input included). */
+const GRADE_ROMAN_OF = { '1': 'I', '2': 'II', '3': 'III', '4': 'IV', '5': 'V', '6': 'VI',
+                         'I': 'I', 'II': 'II', 'III': 'III', 'IV': 'IV', 'V': 'V', 'VI': 'VI' };
+
 function canonGrade(g) {
   if (isNaVal(g)) return '';
   const s = String(g).trim().replace(/\s+/g, ' ').replace(/^grade[ .]*/i, '').toUpperCase();
   if (!s) return '';
+  /* Compound / transitional grades ("III/IV", "3/4", "III / IV", "V/VI") are kept
+     as their own canonical label, in the order printed: the first grade describes
+     the top of the band, the second the material below it. */
+  const pair = s.match(/^(I|II|III|IV|V|VI|1|2|3|4|5|6)\s*\/\s*(I|II|III|IV|V|VI|1|2|3|4|5|6)$/);
+  if (pair) return 'Grade ' + GRADE_ROMAN_OF[pair[1]] + '/' + GRADE_ROMAN_OF[pair[2]];
   if (/^(FILL|FILLED|F|MADE GROUND|MADE-GROUND|FILL MATERIAL|FILL\/SOIL)$/.test(s)) return 'FILL';
   if (/^(I|1)$/.test(s)) return 'Grade I';
   if (/^(II|2)$/.test(s)) return 'Grade II';
@@ -883,13 +950,40 @@ function gradePaletteLookup(colours, canonical) {
   return null;
 }
 
-/** Geol. Grade colour from the CV/2023/03 palette. Exact-string matching so
-    "Grade III" never swallows "Grade III/IV". */
+/**
+ * Geol. Grade colour. Exact-string matching so "Grade III" never swallows
+ * "Grade III/IV", and compound grades resolve to their own transitional colour.
+ * A real-but-unrecognised grade falls back to the neutral slate
+ * (GRADE_UNKNOWN_FALLBACK) rather than to no colour at all, so a strip bar can
+ * never be drawn as a blank white strip.
+ */
 function colourForGrade(g) {
   const t = activeThresholds();
   const c = canonGrade(g);
-  if (!c) return t.grade.unknown;
-  return gradePaletteLookup(t.grade.colours, c) || t.grade.unknown;
+  if (!c) return t.grade.unknown;                       // nothing logged at all
+  const hit = gradePaletteLookup(t.grade.colours, c);
+  if (hit) return hit;
+  return GRADE_UNKNOWN_FALLBACK;                        // logged, but off-palette
+}
+
+/** Compound / transitional grades present in the palette: [{ label, colour }]. */
+function compoundGradeChips(thresholds) {
+  const t = thresholds || activeThresholds();
+  const colours = (t && t.grade && t.grade.colours) || GRADE_COLOURS;
+  const out = [];
+  const seen = {};
+  COMPOUND_GRADE_ORDER.forEach(function (key) {
+    const colour = gradePaletteLookup(colours, key);
+    if (!colour || seen[colour + '|' + key]) return;
+    seen[colour + '|' + key] = true;
+    out.push({ label: key, colour: colour, note: GRADE_DESCRIPTORS[key] || '' });
+  });
+  /* Any compound class a user added by hand. */
+  Object.keys(colours).forEach(function (key) {
+    if (key.indexOf('/') === -1 || COMPOUND_GRADE_ORDER.indexOf(key) !== -1) return;
+    out.push({ label: key, colour: colours[key], note: GRADE_DESCRIPTORS[key] || '' });
+  });
+  return out;
 }
 
 /**
@@ -1344,10 +1438,68 @@ function validateBorehole(hole) {
     });
   }
 
+  /* --- physical sanity checks (advisory — they never block the hole) --------
+     • intervals must descend: from < to, and each band starts at or above the
+       bottom of the band above it;
+     • core recovery must obey RQD ≤ SCR ≤ TCR — a break in that chain is a
+       transcription error, flagged as a data anomaly on the card. */
+  const anomalies = [];
+  const rangeOf = function (r) {
+    const t = toNum(r && r.top), b = toNum(r && r.btm);
+    return (t === null || b === null) ? 'unknown interval' : (t.toFixed(2) + '–' + b.toFixed(2) + ' mPD');
+  };
+  [['strata', strata], ['runs', runs], ['fi', fi]].forEach(function (pair) {
+    const label = pair[0], arr = pair[1];
+    arr.forEach(function (r, i) {
+      const top = toNum(r && r.top), btm = toNum(r && r.btm);
+      if (top === null || btm === null) return;
+      if (!(top > btm)) {
+        anomalies.push({ code: 'order', short: 'from ≥ to',
+          detail: label + '[' + i + ']: top ' + top + ' mPD is not above bottom ' + btm + ' mPD' });
+        return;
+      }
+      const prev = arr[i - 1];
+      const prevBtm = prev ? toNum(prev.btm) : null;
+      if (prevBtm !== null && top > prevBtm + 0.01) {
+        anomalies.push({ code: 'order', short: 'Depth order',
+          detail: label + '[' + i + ']: starts at ' + top.toFixed(2) + ' mPD but the band above ends at ' +
+            prevBtm.toFixed(2) + ' mPD (gap / overlap)' });
+      }
+    });
+  });
+  runs.forEach(function (r) {
+    const tcr = toNum(r && r.tcr), scr = toNum(r && r.scr), rqd = toNum(r && r.rqd);
+    if (scr !== null && tcr !== null && scr > tcr) {
+      anomalies.push({ code: 'recovery', short: 'SCR > TCR',
+        detail: 'SCR ' + scr + ' > TCR ' + tcr + ' over ' + rangeOf(r) + ' — core recovery must obey RQD ≤ SCR ≤ TCR' });
+    }
+    if (rqd !== null && scr !== null && rqd > scr) {
+      anomalies.push({ code: 'recovery', short: 'RQD > SCR',
+        detail: 'RQD ' + rqd + ' > SCR ' + scr + ' over ' + rangeOf(r) + ' — core recovery must obey RQD ≤ SCR ≤ TCR' });
+    }
+  });
+
   const status = critical ? VALIDATION_STATUS.ERROR
     : coordsMissing ? VALIDATION_STATUS.MISSING_COORDS
       : (missing.length ? VALIDATION_STATUS.WARNING : VALIDATION_STATUS.COMPLETE);
-  return { status: status, missingFields: missing, coordsMissing: coordsMissing };
+  return { status: status, missingFields: missing, coordsMissing: coordsMissing, anomalies: anomalies };
+}
+
+/** Badge text for a card's physical anomalies, e.g. "⚠️ Data Anomaly: RQD > SCR". */
+function anomalyBadgeText(anomalies) {
+  const list = Array.isArray(anomalies) ? anomalies : [];
+  if (!list.length) return '';
+  const first = list[0] && list[0].short ? list[0].short : 'check data';
+  return '\u26A0\uFE0F Data Anomaly: ' + first + (list.length > 1 ? ' (+' + (list.length - 1) + ')' : '');
+}
+
+/** Full anomaly text for a tooltip / Diagnostics line. */
+function anomalyTooltip(anomalies) {
+  const list = Array.isArray(anomalies) ? anomalies : [];
+  if (!list.length) return '';
+  const core = list.some(function (a) { return a && a.code === 'recovery'; });
+  return list.map(function (a) { return a && a.detail ? a.detail : String(a); }).join('\n') +
+    (core ? '\n(Physical order violated: RQD > TCR.)' : '');
 }
 
 /** Re-validates every hole and stores the result on the item (as required by the spec). */
@@ -1357,27 +1509,33 @@ function validateBoreholes(holes) {
   return list;
 }
 
-/** Counts by status, for the sidebar footer / diagnostics. */
+/** Counts by status, plus how many holes carry a physical anomaly. */
 function validationSummary(holes) {
-  const out = { complete: 0, warning: 0, noCoords: 0, error: 0 };
+  const out = { complete: 0, warning: 0, noCoords: 0, error: 0, anomalies: 0 };
   (holes || []).forEach(function (h) {
-    const s = (h.validationStatus || validateBorehole(h)).status;
+    const v = h.validationStatus || validateBorehole(h);
+    const s = v.status;
     if (s === VALIDATION_STATUS.MISSING_COORDS) out.noCoords++;
     else out[s] = (out[s] || 0) + 1;
+    if (v.anomalies && v.anomalies.length) out.anomalies++;
   });
   return out;
 }
 
-/** Short hover text for an indicator. */
+/** Short hover text for an indicator (includes any physical-anomaly detail). */
 function validationTooltip(v) {
   if (!v) return '';
-  if (v.status === VALIDATION_STATUS.COMPLETE) return 'Data complete — coordinates and all intervals present.';
+  const anomaly = v.anomalies && v.anomalies.length ? '\n\n' + anomalyTooltip(v.anomalies) : '';
+  if (v.status === VALIDATION_STATUS.COMPLETE) {
+    return (anomaly ? 'Data complete — all intervals present.' + anomaly
+      : 'Data complete — coordinates and all intervals present.');
+  }
   if (v.status === VALIDATION_STATUS.MISSING_COORDS) {
     return 'No coordinates on the log — this hole still renders in the subsurface profile. ' +
-      'Click the pencil and type its HK1980 Easting / Northing to place it on the map.';
+      'Click the pencil and type its HK1980 Easting / Northing to place it on the map.' + anomaly;
   }
-  if (v.status === VALIDATION_STATUS.WARNING) return 'Missing: ' + v.missingFields.join(', ');
-  return 'Cannot be plotted — missing ' + v.missingFields.join(', ');
+  if (v.status === VALIDATION_STATUS.WARNING) return 'Missing: ' + v.missingFields.join(', ') + anomaly;
+  return 'Cannot be plotted — missing ' + v.missingFields.join(', ') + anomaly;
 }
 
 /* ==========================================================================
@@ -1926,9 +2084,9 @@ function decodeViewState(payload) {
 /** PDFs parsed at once. Sequential (1) keeps OpenRouter inside its rate limits. */
 const BATCH_PARALLEL = 1;
 /** Pause between two consecutive files in the batch queue, milliseconds. */
-const BATCH_PAUSE_MS = 1200;
+const BATCH_PAUSE_MS = 1500;
 /** Extra attempts for one file after a transient provider failure. */
-const MAX_REQUEST_RETRIES = 2;
+const MAX_REQUEST_RETRIES = 1;
 /** Backoff before each of those extra attempts, milliseconds. */
 const RETRY_DELAY_MS = 2000;
 /** How many models one attempt may hop over when a provider hiccups. */
@@ -2142,10 +2300,10 @@ function openRouterFinishReason(json) {
   return (ch && ch.finish_reason) || '';
 }
 
-/** Tolerant JSON extraction: strips code fences and trailing commas. */
+/** Tolerant JSON extraction: strips code fences, trailing commas, and repairs a
+    dangling bracket so a nearly-complete body is not thrown away. */
 function extractJson(text) {
-  let t = String(text || '').trim();
-  t = t.replace(/^```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+  let t = stripFences(String(text || ''));
   try { return JSON.parse(t); } catch (e) { /* fall through to slicing */ }
   const firstObj = t.indexOf('{');
   const firstArr = t.indexOf('[');
@@ -2157,9 +2315,109 @@ function extractJson(text) {
   const open = t.charAt(start);
   const close = open === '{' ? '}' : ']';
   const end = t.lastIndexOf(close);
-  if (end <= start) throw new Error('The model response contained truncated JSON.');
+  if (end <= start) {
+    /* No closing bracket at all: repair the tail rather than giving up. */
+    const repaired = closeDanglingBrackets(t.slice(start));
+    try { return JSON.parse(repaired); } catch (e2) { /* fall through to the error */ }
+    throw new Error('The model response contained truncated JSON.');
+  }
   const slice = t.slice(start, end + 1).replace(/,\s*([}\]])/g, '$1');
-  return JSON.parse(slice);
+  try { return JSON.parse(slice); } catch (e) {
+    /* Minor bracket mismatch: close what is open, drop a dangling separator, and
+       retry once before reporting a parse failure. */
+    const repaired = closeDanglingBrackets(slice);
+    try {
+      return JSON.parse(repaired);
+    } catch (e2) {
+      const err = new Error('The model response was not valid JSON (' + e2.message + ').');
+      err.repaired = repaired;
+      err.raw = String(text || '').slice(0, 2000);
+      throw err;
+    }
+  }
+}
+
+/* ---- self-learning correction memory (FR-040) ---------------------------- */
+
+/** localStorage key holding the few-shot corrections learned on this machine. */
+const AI_CORRECTIONS_KEY = 'gi_ai_corrections';
+/** Corrections kept in storage, and how many ride along with a prompt. */
+const MAX_AI_CORRECTIONS = 50;
+const AI_MEMORY_SAMPLE = 5;
+
+/**
+ * The "[CRITICAL USER CORRECTIONS & MEMORY]" block appended to the extraction
+ * prompt, built from the manual edits the user has made in the inspector.
+ * Returns '' when nothing has been learned yet, so the prompt is unchanged for a
+ * fresh browser.
+ */
+function correctionsMemoryPrompt(corrections) {
+  const list = (Array.isArray(corrections) ? corrections : []).filter(function (c) {
+    return c && c.holeId && c.correctedGrade && c.from !== undefined && c.to !== undefined;
+  });
+  if (!list.length) return '';
+  return '\n[CRITICAL USER CORRECTIONS & MEMORY]:\n' +
+    list.slice(-AI_MEMORY_SAMPLE).map(function (c) {
+      return '- User rule: For borehole ' + c.holeId + ', correctly format interval ' +
+        c.from + '-' + c.to + 'm as ' + c.correctedGrade;
+    }).join('\n');
+}
+
+/**
+ * Builds one learned-correction record from a manual grade edit. `top`/`btm` are
+ * mPD elevations and are recorded as DEPTHS below ground, because that is the
+ * unit the vision prompt reads and writes.
+ */
+function makeCorrectionRecord(hole, top, btm, correctedGrade, previousGrade) {
+  const gl = toNum(hole && hole.gl);
+  const asDepth = function (rl) {
+    const v = toNum(rl);
+    if (v === null) return null;
+    return gl === null ? round2(v) : round2(gl - v);
+  };
+  return {
+    holeId: String((hole && hole.name) || '').toUpperCase(),
+    from: asDepth(top),
+    to: asDepth(btm),
+    correctedGrade: canonGrade(correctedGrade) || String(correctedGrade === null || correctedGrade === undefined ? '' : correctedGrade).trim(),
+    previousGrade: canonGrade(previousGrade) || String(previousGrade === null || previousGrade === undefined ? '' : previousGrade).trim()
+  };
+}
+
+/** Adds a record to the list (newest last, de-duplicated, capped). */
+function addCorrection(list, record) {
+  const out = (Array.isArray(list) ? list.slice() : []).filter(function (c) {
+    return !(c && c.holeId === record.holeId && c.from === record.from && c.to === record.to &&
+             c.correctedGrade === record.correctedGrade);
+  });
+  out.push(record);
+  return out.slice(-MAX_AI_CORRECTIONS);
+}
+
+/** Strips what a dangling tail needs: a trailing comma, a partial key, … */
+function closeDanglingBrackets(text) {
+  const src = String(text === null || text === undefined ? '' : text);
+  const stack = [];
+  let inStr = false, esc = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src.charAt(i);
+    if (inStr) {
+      if (esc) { esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') { if (stack.length) stack.pop(); }
+  }
+  let out = src;
+  if (inStr) out += '"';                              // close an unterminated string
+  out = out.replace(/[,\s]+$/, '');                   // drop a dangling comma
+  out = out.replace(/"[^"]*"\s*:\s*$/, '');           // drop a half-written key
+  out = out.replace(/[,\s]+$/, '');
+  while (stack.length) out += (stack.pop() === '{' ? '}' : ']');
+  return out;
 }
 
 /* ---- page-image budget + document-shape guards (pure) -------------------- */
@@ -2476,15 +2734,34 @@ function buildSelfTests(opts) {
     out.push({ group: group, name: name, pass: !!cond, actual: info === undefined ? '' : String(info), expected: 'true' });
   };
 
-  /* --- Geol. Grade legend (deliverable strata palette) --- */
+  /* --- Geol. Grade legend (deliverable strata palette + compounds) --- */
   [['FILL', '#e0d7ce'], ['Grade VI / Soil', '#bcaaa4'], ['Grade V', '#ffb74d'], ['Grade IV', '#ff7043'],
-   ['Grade III/IV', '#ff7043'], ['Grade IV/III', '#ff7043'], ['Grade III', '#ffa726'],
+   ['Grade III/IV', '#f85a2b'], ['Grade IV/III', '#f85a2b'],
+   ['Grade II/III', '#0ea5e9'], ['Grade III/II', '#0ea5e9'],
+   ['Grade IV/V', '#d97706'], ['Grade V/IV', '#d97706'],
+   ['Grade V/VI', '#b45309'], ['Grade VI/V', '#b45309'], ['Grade III', '#ffa726'],
    ['Grade II', '#42a5f5'], ['Grade I', '#1e88e5'],
    ['fill', '#e0d7ce'], ['GRADE III', '#ffa726'], ['III', '#ffa726'], ['II', '#42a5f5']].forEach(function (c) {
     eq('colour · grade', 'grade "' + c[0] + '" -> ' + c[1], colourForGrade(c[0]), c[1]);
   });
-  eq('colour · grade', 'unlisted grade -> palette grey', colourForGrade('Grade VII'), '#9e9e9e');
-  eq('colour · grade', 'blank grade -> palette grey', colourForGrade(''), '#9e9e9e');
+  /* Compound variants that reach us as arabic numerals or OCR spacing. */
+  [['3/4', 'Grade III/IV'], ['III / IV', 'Grade III/IV'], ['2/3', 'Grade II/III'],
+   ['4/5', 'Grade IV/V'], ['V/VI', 'Grade V/VI'], ['VI/5', 'Grade VI/V']].forEach(function (c) {
+    eq('colour · grade', 'compound "' + c[0] + '" canonicalises', canonGrade(c[0]), c[1]);
+  });
+  eq('colour · grade', 'compound "3/4" gets the transitional orange-red', colourForGrade('3/4'), '#f85a2b');
+  eq('colour · grade', 'the palette keeps every compound class',
+     ['Grade III/IV', 'Grade II/III', 'Grade IV/V', 'Grade V/VI'].every(function (k) {
+       return !!GRADE_COLOURS[k];
+     }), true);
+  /* A real but unknown grade must never be left unpainted (the PR6 white bar). */
+  eq('colour · grade', 'an unrecognised non-empty grade -> neutral slate',
+     colourForGrade('Grade XX'), '#94a3b8');
+  eq('colour · grade', 'the slate is a real colour, never blank or white',
+     /^#[0-9a-f]{6}$/.test(colourForGrade('Grade XX')) && colourForGrade('Grade XX') !== '#ffffff', true);
+  eq('colour · grade', 'an off-palette compound is slate too', colourForGrade('Grade VII/VIII'), '#94a3b8');
+  eq('colour · grade', 'unlisted grade -> neutral slate', colourForGrade('Grade VII'), '#94a3b8');
+  eq('colour · grade', 'blank grade -> palette grey', colourForGrade(''), '#94a3b8');
   eq('colour · grade', 'OCR variant "GRADE VI / SOIL" -> #bcaaa4', colourForGrade('GRADE VI / SOIL'), '#bcaaa4');
   eq('colour · grade', 'OCR variant "VI/Soil" -> #bcaaa4', colourForGrade('VI/Soil'), '#bcaaa4');
   eq('colour · grade', '"Soil" -> Grade VI/Soil colour', colourForGrade('Soil'), '#bcaaa4');
@@ -2818,8 +3095,8 @@ function buildSelfTests(opts) {
 
   /* --- batch pacing + transient-failure retry policy (FR-038) --- */
   eq('openrouter', 'batch uploads are sequential (1 at a time)', BATCH_PARALLEL, 1);
-  eq('openrouter', 'a 1.2 s pause separates two batch requests', BATCH_PAUSE_MS, 1200);
-  eq('openrouter', 'a transient failure is retried twice', MAX_REQUEST_RETRIES, 2);
+  eq('openrouter', 'a 1.5 s cooldown separates two batch requests', BATCH_PAUSE_MS, 1500);
+  eq('openrouter', 'a transient failure is retried once', MAX_REQUEST_RETRIES, 1);
   eq('openrouter', 'each retry waits 2 s', RETRY_DELAY_MS, 2000);
   eq('openrouter', 'the open-weights fallback chain',
      OPEN_WEIGHT_VISION_MODELS.join(','),
@@ -2876,7 +3153,8 @@ function buildSelfTests(opts) {
      }).join(','), 'true,true,true,true');
   eq('thresholds', 'stratum grades follow the deliverable palette',
      [defTh.grade.colours['FILL'], defTh.grade.colours['Grade III'], defTh.grade.colours['Grade II'],
-      defTh.grade.colours['Grade I']].join(','), '#e0d7ce,#ffa726,#42a5f5,#1e88e5');
+      defTh.grade.colours['Grade I'], defTh.grade.colours['Grade III/IV'], defTh.grade.unknown].join(','),
+     '#e0d7ce,#ffa726,#42a5f5,#1e88e5,#f85a2b,#94a3b8');
   eq('thresholds', 'percentage tracks treat 0 as N/A',
      String(defTh.tcr.zeroIsNa) + String(defTh.scr.zeroIsNa) + String(defTh.rqd.zeroIsNa), 'truetruetrue');
   eq('thresholds', 'FI treats 0 as a real value', String(defTh.fi.zeroIsNa), 'false');
@@ -2959,13 +3237,29 @@ function buildSelfTests(opts) {
 
   /* --- dual legend (FR-023) --- */
   const gradeRows = gradeLegendRows(defaultThresholds());
-  eq('legend', '[1] strata grade rows are deduped by colour', String(gradeRows.length), '7');
-  eq('legend', '[1] runs FILL → Grade I', gradeRows[0].label + '…' + gradeRows[6].label, 'FILL…Grade I');
+  eq('legend', '[1] strata grade rows are deduped by colour', String(gradeRows.length), '11');
+  eq('legend', '[1] runs FILL → Grade I',
+     gradeRows[0].label + '…' + gradeRows[gradeRows.length - 1].label, 'FILL…Grade I');
   eq('legend', '[1] FILL swatch is the deliverable cream', gradeRows[0].colour, '#e0d7ce');
   eq('legend', '[1] rows carry the Geoguide decomposition wording',
      gradeRows.map(function (r) { return r.note; }).join(' / '),
-     'Fill / Made Ground / Residual Soil / Completely Decomposed / Highly Decomposed / ' +
-     'Moderately Decomposed / Slightly Decomposed / Fresh');
+     'Fill / Made Ground / Residual Soil / Completely Decomposed / Completely Decomposed to Residual Soil / ' +
+     'Highly Decomposed / Highly to Completely Decomposed / Moderately to Highly Decomposed / ' +
+     'Moderately Decomposed / Slightly to Moderately Decomposed / Slightly Decomposed / Fresh');
+  ok('legend', '[1] every compound class is painted with its own transitional colour',
+     ['Grade III/IV', 'Grade II/III', 'Grade IV/V', 'Grade V/VI'].every(function (k) {
+       return !!gradeRows.filter(function (r) { return r.label === k && r.colour; })[0];
+     }), gradeRows.map(function (r) { return r.label + '=' + r.colour; }).join(' '));
+  ok('legend', '[1] reversed compound forms share the one colour',
+     colourForGrade('Grade III/II') === colourForGrade('Grade II/III') &&
+     colourForGrade('Grade VI/V') === colourForGrade('Grade V/VI'), 'shared');
+  const chips = compoundGradeChips(defaultThresholds());
+  ok('legend', '[1] compound chip badges cover the transitional grades',
+     ['Grade III/IV', 'Grade II/III', 'Grade IV/V'].every(function (k) {
+       return !!chips.filter(function (c) { return c.label === k; })[0];
+     }), chips.map(function (c) { return c.label; }).join(', '));
+  eq('legend', '[1] chips are colour-matched to the palette',
+     chips.filter(function (c) { return c.label === 'Grade III/IV'; })[0].colour, '#f85a2b');
   eq('legend', '[1] title is the renamed block', LEGEND_TITLES.grade, '[1] CLASSIFICATION OF DECOMPOSITION GRADES');
   eq('legend', '[2] title is unchanged', LEGEND_TITLES.quant,
      '[2] QUANTITATIVE PARAMETER COLOR SCALE (TCR / SCR / RQD / FI)');
@@ -3278,6 +3572,91 @@ function buildSelfTests(opts) {
        ground_level: 32.4, eoh: 3.4, intervals: [{ from: 0, to: 3.4, grade: 'Grade II' }] }).hole.easting), 'null');
   eq('compact', 'the compact tracks helper is reusable on its own',
      intervalsToTracks([{ from: 0, to: 1, grade: 'FILL' }], 20, 1, []).strata[0].btm, 19);
+
+  /* --- physical validator: depth order + core-recovery chain (FR-039) ---- */
+  const cleanRun = validateBorehole({ name: 'OK', easting: 1, northing: 1, gl: 30, eoh: 26,
+    strata: [{ top: 30, btm: 26, grade: 'Grade II' }],
+    runs: [{ top: 30, btm: 26, tcr: 100, scr: 96, rqd: 90 }], fi: [] });
+  eq('validator', 'a physically consistent hole has no anomalies', cleanRun.anomalies.length, 0);
+  eq('validator', 'a consistent hole still validates as complete', cleanRun.status, 'complete');
+  const rqdAnomaly = validateBorehole({ name: 'R1', easting: 1, northing: 1, gl: 33.87, eoh: 30,
+    strata: [], runs: [{ top: 33.87, btm: 33.49, tcr: 0, scr: 0, rqd: 0 },
+                       { top: 31.65, btm: 30, tcr: 100, scr: 93, rqd: 100 }], fi: [] });
+  eq('validator', 'RQD > SCR is flagged', rqdAnomaly.anomalies[0].short, 'RQD > SCR');
+  ok('validator', 'the anomaly names both values and the interval',
+     /RQD 100 > SCR 93 over 31\.65/.test(rqdAnomaly.anomalies[0].detail) &&
+     /mPD/.test(rqdAnomaly.anomalies[0].detail), rqdAnomaly.anomalies[0].detail);
+  eq('validator', 'the badge text quotes the anomaly',
+     anomalyBadgeText(rqdAnomaly.anomalies), '\u26A0\uFE0F Data Anomaly: RQD > SCR');
+  ok('validator', 'the tooltip states the physical rule',
+     /RQD > TCR/.test(anomalyTooltip(rqdAnomaly.anomalies)), anomalyTooltip(rqdAnomaly.anomalies).replace(/\n/g, ' | '));
+  eq('validator', 'an anomaly does not change the validation status', rqdAnomaly.status, 'complete');
+  const scrAnomaly = validateBorehole({ name: 'R2', easting: 1, northing: 1, gl: 30, eoh: 28,
+    strata: [], runs: [{ top: 30, btm: 28, tcr: 88, scr: 100, rqd: 100 }], fi: [] });
+  ok('validator', 'SCR > TCR is flagged', /\u26A0\uFE0F Data Anomaly: SCR > TCR/.test(anomalyBadgeText(scrAnomaly.anomalies)),
+     anomalyBadgeText(scrAnomaly.anomalies));
+  const orderAnomaly = validateBorehole({ name: 'R3', easting: 1, northing: 1, gl: 30, eoh: 24,
+    strata: [{ top: 30, btm: 26, grade: 'FILL' }, { top: 28, btm: 24, grade: 'Grade II' }], runs: [], fi: [] });
+  ok('validator', 'a broken depth order is flagged', /Depth order/.test(anomalyBadgeText(orderAnomaly.anomalies)),
+     anomalyBadgeText(orderAnomaly.anomalies));
+  const inverted = validateBorehole({ name: 'R4', easting: 1, northing: 1, gl: 30, eoh: 26,
+    strata: [{ top: 26, btm: 30, grade: 'FILL' }], runs: [], fi: [] });
+  ok('validator', 'from ≥ to is flagged', /from ≥ to/.test(anomalyBadgeText(inverted.anomalies)),
+     anomalyBadgeText(inverted.anomalies));
+  eq('validator', 'the badge is empty for a clean hole', anomalyBadgeText([]), '');
+  const vsum = validationSummary([{ name: 'R5', easting: 1, northing: 1, gl: 30, eoh: 28,
+    strata: [], runs: [{ top: 30, btm: 28, tcr: 90, scr: 95, rqd: 99 }], fi: [] }]);
+  eq('validator', 'the summary counts anomalous holes', vsum.anomalies, 1);
+  ok('validator', 'the anomaly detail reaches the card tooltip',
+     /RQD ≤ SCR ≤ TCR/.test(validationTooltip(rqdAnomaly)), validationTooltip(rqdAnomaly).split('\n').pop());
+
+  /* --- dangling-bracket repair (FR-039) ---------------------------------- */
+  eq('repair', 'a truncated object tail is closed',
+     closeDanglingBrackets('{"a":1,"b":[1,2'), '{"a":1,"b":[1,2]}');
+  eq('repair', 'a dangling comma is dropped before closing',
+     closeDanglingBrackets('{"a":1,'), '{"a":1}');
+  eq('repair', 'a half-written key is dropped',
+     closeDanglingBrackets('{"a":1,"b":'), '{"a":1}');
+  eq('repair', 'an unterminated string is closed',
+     closeDanglingBrackets('{"a":"x'), '{"a":"x"}');
+  eq('repair', 'valid JSON is left untouched',
+     closeDanglingBrackets('{"a":[1,2]}'), '{"a":[1,2]}');
+  eq('repair', 'braces inside strings are ignored',
+     closeDanglingBrackets('{"t":"{not a brace"}'), '{"t":"{not a brace"}');
+  const repairedHole = normalizeBorehole(extractJson('{"hole_id":"PR6","ground_level":30,"eoh":27,' +
+    '"intervals":[{"from":0,"to":3,"grade":"Grade III/IV","tcr":95,"scr":95,"rqd":95,"fi":"1.2"}')).hole;
+  eq('repair', 'a truncated model response still imports', repairedHole.name, 'PR6');
+  eq('repair', 'the repaired payload keeps its compound grade', repairedHole.strata[0].grade, 'Grade III/IV');
+  let repairThrew = false;
+  try { extractJson('{ this is not json at all ### }'); } catch (e) { repairThrew = true; }
+  ok('repair', 'genuinely broken JSON still fails cleanly', repairThrew, 'threw');
+
+  /* --- self-learning memory (FR-040) ------------------------------------- */
+  eq('memory', 'the storage key is the agreed one', AI_CORRECTIONS_KEY, 'gi_ai_corrections');
+  eq('memory', 'no corrections -> no memory block', correctionsMemoryPrompt([]), '');
+  eq('memory', 'junk entries are ignored', correctionsMemoryPrompt([null, {}, { holeId: 'X' }]), '');
+  const rec = makeCorrectionRecord({ name: 'pr6', gl: 51.58 }, 50.73, 49.78, 'Grade III/IV', 'Grade IV');
+  eq('memory', 'the record names the hole in upper case', rec.holeId, 'PR6');
+  eq('memory', 'elevations are stored as depths below ground', rec.from + '-' + rec.to, '0.85-1.8');
+  eq('memory', 'the corrected grade is canonicalised', rec.correctedGrade, 'Grade III/IV');
+  eq('memory', 'the previous grade is remembered too', rec.previousGrade, 'Grade IV');
+  const memPrompt = correctionsMemoryPrompt([rec]);
+  ok('memory', 'the memory block carries the requested heading',
+     memPrompt.indexOf('[CRITICAL USER CORRECTIONS & MEMORY]:') !== -1, memPrompt.split('\n')[1]);
+  eq('memory', 'the memory line spells out the interval rule',
+     memPrompt.split('\n')[2], '- User rule: For borehole PR6, correctly format interval 0.85-1.8m as Grade III/IV');
+  eq('memory', 'the prompt consumes only the newest five rules',
+     correctionsMemoryPrompt([1, 2, 3, 4, 5, 6, 7].map(function (i) {
+       return { holeId: 'H' + i, from: 0, to: 1, correctedGrade: 'Grade II' };
+     })).split('\n').length, 7);
+  const capped = addCorrection([], rec);
+  eq('memory', 'a learned rule is appended', capped.length, 1);
+  eq('memory', 'the same rule is not duplicated', addCorrection(capped, rec).length, 1);
+  const manyCorr = [];
+  for (let mi = 0; mi < MAX_AI_CORRECTIONS + 10; mi++) {
+    manyCorr.push({ holeId: 'H' + mi, from: mi, to: mi + 1, correctedGrade: 'Grade II' });
+  }
+  eq('memory', 'the store is capped', addCorrection(manyCorr, rec).length, MAX_AI_CORRECTIONS);
 
   return out;
 }
@@ -3618,21 +3997,25 @@ function updateStorageInfo() {
   const sum = $('validation-summary');
   if (sum) {
     const s = validationSummary(state.data);
-    sum.textContent = (s.error || s.warning || s.noCoords)
+    sum.textContent = (s.error || s.warning || s.noCoords || s.anomalies)
       ? (s.noCoords ? '📍 ' + s.noCoords : '') +
-        (s.noCoords && (s.warning || s.error) ? ' · ' : '') +
+        (s.noCoords && (s.warning || s.error || s.anomalies) ? ' · ' : '') +
         (s.warning ? '⚠ ' + s.warning : '') +
-        (s.warning && s.error ? ' · ' : '') +
-        (s.error ? '❌ ' + s.error : '')
+        (s.warning && (s.error || s.anomalies) ? ' · ' : '') +
+        (s.error ? '❌ ' + s.error : '') +
+        (s.error && s.anomalies ? ' · ' : '') +
+        (s.anomalies ? '🧪 ' + s.anomalies : '')
       : (state.data.length ? '✓ all valid' : '');
     sum.className = 'text-[10px] font-semibold ' +
-      (s.error ? 'text-red-600' : (s.warning || s.noCoords) ? 'text-amber-600' : 'text-emerald-600');
+      (s.error ? 'text-red-600' : (s.warning || s.noCoords || s.anomalies) ? 'text-amber-600' : 'text-emerald-600');
     sum.title = state.data.length
       ? (s.error ? s.error + ' hole(s) cannot be plotted' : '') +
         (s.error && (s.warning || s.noCoords) ? ' · ' : '') +
         (s.noCoords ? s.noCoords + ' hole(s) have no coordinates yet (still shown in the chart)' : '') +
-        (s.noCoords && s.warning ? ' · ' : '') +
-        (s.warning ? s.warning + ' hole(s) have missing data' : '') ||
+        (s.noCoords && (s.warning || s.anomalies) ? ' · ' : '') +
+        (s.warning ? s.warning + ' hole(s) have missing data' : '') +
+        (s.warning && s.anomalies ? ' · ' : '') +
+        (s.anomalies ? s.anomalies + ' hole(s) have a physical data anomaly (see the card badge)' : '') ||
         'All boreholes have complete data'
       : 'No boreholes loaded';
   }
@@ -3772,6 +4155,10 @@ function rowHtml(h) {
       : v.status === VALIDATION_STATUS.WARNING
         ? '<span class="gi-status gi-warn" title="' + esc(validationTooltip(v)) + '" aria-label="Incomplete data">&#9888; Incomplete</span>'
         : '<span class="gi-status gi-err" title="' + esc(validationTooltip(v)) + '" aria-label="Cannot be plotted">&#10060; Invalid</span>';
+  const anomalyBadge = (v.anomalies && v.anomalies.length)
+    ? ' <span class="gi-status gi-anomaly" title="' + esc(anomalyTooltip(v.anomalies)) + '" aria-label="Physical data anomaly">' +
+      esc(anomalyBadgeText(v.anomalies)) + '</span>'
+    : '';
   const missingLine = v.status === VALIDATION_STATUS.COMPLETE ? '' :
     v.status === VALIDATION_STATUS.MISSING_COORDS
       ? '<div class="gi-missing truncate" title="' + esc(validationTooltip(v)) + '">No coordinates — click &#9998; to type Easting / Northing</div>'
@@ -3794,7 +4181,7 @@ function rowHtml(h) {
         '<div class="flex items-center gap-1.5 min-w-0">' +
           '<span class="font-semibold text-[12.5px] text-slate-800 truncate">' + esc(h.name) + '</span>' +
           (h.imported ? '<span class="text-[9px] font-bold px-1 rounded bg-blue-100 text-blue-700 shrink-0">AI</span>' : '') +
-          badge +
+          badge + anomalyBadge +
         '</div>' +
         '<div class="text-[11px] text-slate-500 tabular-nums truncate">' + esc(sub) + '</div>' +
         missingLine +
@@ -4323,9 +4710,20 @@ function renderLegend() {
           (r.note ? '<span class="gi-legend-note">' + esc(r.note) + '</span>' : '') + '</li>';
       }).join('') + '</ul></section>';
   };
+  /* Chip badges for the compound / transitional weathering grades, so a
+     "Grade III/IV" strip bar can be matched to its colour at a glance. */
+  const chips = compoundGradeChips(t);
+  const chipStrip = chips.length
+    ? '<div class="gi-legend-chips" title="Compound / transitional weathering grades — colour-matched to the strip bars">' +
+      '<span class="gi-legend-chips-label">Compound grades:</span>' +
+      chips.map(function (c) {
+        return '<span class="gi-chip" title="' + esc(c.label + (c.note ? ' — ' + c.note : '')) + '">' +
+          '<span class="gi-chip-dot" style="background:' + c.colour + '"></span>' + esc(c.label) + '</span>';
+      }).join('') + '</div>'
+    : '';
   host.innerHTML =
     block(LEGEND_TITLES.grade, grades,
-      'Hong Kong decomposition grades (Geoguide 3 wording) — edit in Settings → Legend thresholds') +
+      'Hong Kong decomposition grades (Geoguide 3 wording) — edit in Settings → Legend thresholds') + chipStrip +
     block(LEGEND_TITLES.quant, quant,
       'Band colours per track — edit in Settings → Legend thresholds');
 }
@@ -4448,28 +4846,33 @@ function buildProfileFigure(holes, opts) {
     list.forEach(function (h, bi) {
       tr.items(h).forEach(function (it) {
         if (it.top === null || it.btm === null || !(it.top > it.btm)) return;
+        /* A band too narrow for its own label gets an arrow callout — but the
+           COLOURED STRIP IS STILL DRAWN underneath it. Skipping the bar (as this
+           once did) left a thin compound band such as "Grade III/IV" looking like
+           an uncoloured white gap in the strip. */
+        let label = it.label;
         if (it.callout && !textFitsSegment((it.top - it.btm) / span * plotW, it.label, fs)) {
-          /* Too thin to hold its own text → arrow callout above/below the bar. */
           const up = (calloutSeq % 2) === 0;
           const level = Math.floor(calloutSeq / 2);
           calloutSeq++;
           annotations.push({
             xref: 'x', yref: 'y', x: (it.top + it.btm) / 2, y: profileRowIndex(bi, ti),
-            text: it.callout, showarrow: true, arrowhead: 2, arrowsize: 0.6, arrowwidth: 0.8,
-            arrowcolor: '#64748b',
+            text: it.callout, showarrow: true, arrowhead: 2, arrowsize: 0.6, arrowwidth: 1,
+            arrowcolor: it.colour || '#64748b',
             ax: 0, ay: (up ? PROFILE_CHART.calloutUp : -PROFILE_CHART.calloutUp) * (13 + level * 12),
             axref: 'pixel', ayref: 'pixel',
             font: { family: PROFILE_FONT, size: PROFILE_CHART.calloutPx * scale, color: '#334155' },
-            bgcolor: 'rgba(255,255,255,0.95)', bordercolor: '#cbd5e1', borderwidth: 0.8, borderpad: 2
+            bgcolor: 'rgba(255,255,255,0.95)', bordercolor: it.colour || '#cbd5e1',
+            borderwidth: 1.2, borderpad: 2
           });
-          return;
+          label = '';                       // the callout carries the text
         }
         const b = buckets.get(it.colour) || { x: [], base: [], y: [], text: [], cd: [] };
         b.x.push(Math.round((it.top - it.btm) * 10000) / 10000);
         b.base.push(it.btm);
         b.y.push(h.name + ' · ' + tr.title);
-        b.text.push(it.label);
-        b.cd.push([it.top, it.btm, it.label]);
+        b.text.push(label);
+        b.cd.push([it.top, it.btm, it.label]);   // hover always names the grade
         buckets.set(it.colour, b);
       });
     });
@@ -4992,6 +5395,7 @@ function updateSettingsUI() {
     (shapeNow === 'complete' ? '' : ' ⚠ This key looks ' + shapeNow + ' — check for a truncated paste.'),
     !!state.keyMigration);
   updateStorageInfo();
+  updateMemoryUI();
 }
 
 function readModelFromUI() {
@@ -5105,6 +5509,8 @@ function wireSettings() {
     el.type = el.type === 'password' ? 'text' : 'password';
   });
   $('btn-reset-seed').addEventListener('click', resetToSeed);
+  const memoryBtn = $('btn-clear-memory');
+  if (memoryBtn) memoryBtn.addEventListener('click', clearAiCorrections);
   const demo = $('btn-load-demo');
   if (demo) demo.addEventListener('click', resetToSeed);
   $('btn-new-page').addEventListener('click', newPage);
@@ -5296,13 +5702,67 @@ async function renderPdfPage(file, pageNo, scale, mime, budget) {
   return out;
 }
 
+/* ---- self-learning memory: storage + prompt wiring (FR-040) -------------- */
+
+/** Corrections learned on this machine (never uploaded anywhere by itself). */
+function loadAiCorrections() {
+  try {
+    const parsed = JSON.parse(safeGet(AI_CORRECTIONS_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) { return []; }
+}
+
+function saveAiCorrections(list) {
+  /* safeSet swallows a blocked/quota-exceeded store — learning is simply not
+     persisted in that case, the import itself is unaffected. */
+  safeSet(AI_CORRECTIONS_KEY, JSON.stringify((list || []).slice(-MAX_AI_CORRECTIONS)));
+}
+
+/** Records one learned correction and refreshes the Settings read-out. */
+function learnCorrection(record) {
+  saveAiCorrections(addCorrection(loadAiCorrections(), record));
+  updateMemoryUI();
+}
+
+function clearAiCorrections() {
+  safeDel(AI_CORRECTIONS_KEY);
+  updateMemoryUI();
+  showToast('AI correction memory cleared — imports go back to the base prompt.');
+}
+
+/**
+ * The prompt actually sent: the base contract plus the few-shot memory of the
+ * user's own manual corrections (the model learns from previous edits made in
+ * this browser).
+ */
+function extractionPrompt() {
+  const memory = correctionsMemoryPrompt(loadAiCorrections());
+  if (memory) console.info('[GI] sending ' + loadAiCorrections().length + ' learned correction(s) as few-shot memory');
+  return EXTRACTION_PROMPT + memory;
+}
+
+/** Reflects the learned-correction count in Settings. */
+function updateMemoryUI() {
+  const info = $('memory-info');
+  const btn = $('btn-clear-memory');
+  const n = loadAiCorrections().length;
+  if (btn) btn.classList.toggle('hidden', !n);
+  if (info) {
+    info.textContent = n
+      ? n + ' learned correction rule' + (n === 1 ? '' : 's') + ' stored under ' + AI_CORRECTIONS_KEY +
+        ' — the newest ' + AI_MEMORY_SAMPLE + ' are sent with every extraction prompt.'
+      : 'No manual corrections learned yet. Fix a grade in the Inspect dialog and the rule is remembered ' +
+        'for future imports on this machine (' + AI_CORRECTIONS_KEY + ').';
+  }
+}
+
 /* Phase 2: ask the OpenRouter vision model about the image. */
 async function callOpenRouterModel(model, dataUrl, jsonMode, maxTokens, noReasoning) {
   const req = buildOpenRouterRequest({
     apiKey: currentApiKey(),
     model: model,
     dataUrl: dataUrl,
-    prompt: EXTRACTION_PROMPT,
+    prompt: extractionPrompt(),
     jsonMode: jsonMode,
     maxTokens: maxTokens,
     noReasoning: noReasoning
@@ -5998,7 +6458,7 @@ async function runQueue() {
       /* Sequential by design: a pause between files keeps OpenRouter inside its
          rate limits instead of tripping them with parallel requests. */
       if (!first) {
-        setParseStatus('Pausing ' + (BATCH_PAUSE_MS / 1000) + ' s before the next PDF (rate-limit friendly)…');
+        setParseStatus('Cooling down ' + (BATCH_PAUSE_MS / 1000) + ' s before the next PDF (rate-limit friendly)…');
         await sleep(BATCH_PAUSE_MS);
       }
       first = false;
@@ -6202,6 +6662,26 @@ function runDiagnostics() {
       : (integrity.length ? '✗' : '✓') + ' Current dataset (' + state.data.length + ' holes) — ' +
         (integrity.length ? integrity.length + ' problem(s)' : 'structurally consistent')) + '</p>' +
     (integrity.length ? '<ul class="ml-4 text-slate-600">' + integrity.map(function (p) { return '<li>• ' + esc(p) + '</li>'; }).join('') + '</ul>' : '') +
+    '</div>';
+
+  /* Physical data checks (advisory): depth order + RQD ≤ SCR ≤ TCR. */
+  const anomalyHoles = state.data.filter(function (h) {
+    const v = validateBorehole(h);
+    return v.anomalies && v.anomalies.length;
+  });
+  html += '<div class="pt-3 mt-3 border-t border-slate-200"><p class="font-semibold ' +
+    (anomalyHoles.length ? 'text-amber-700' : 'diag-pass') + '">' +
+    (anomalyHoles.length ? '⚠' : '✓') + ' Physical data checks — ' +
+    (anomalyHoles.length
+      ? anomalyHoles.length + ' hole(s) flagged (depth order / core-recovery chain)'
+      : 'every logged interval descends and RQD ≤ SCR ≤ TCR holds') + '</p>' +
+    (anomalyHoles.length
+      ? '<ul class="ml-4 text-slate-600">' + anomalyHoles.map(function (h) {
+          const v = validateBorehole(h);
+          return '<li>• <b>' + esc(h.name) + '</b>: ' + esc(v.anomalies.map(function (a) { return a.short; }).join(', ')) +
+            '<div class="text-[11px] text-slate-500">' + esc(anomalyTooltip(v.anomalies)).replace(/\n/g, '<br>') + '</div></li>';
+        }).join('') + '</ul>'
+      : '') +
     '</div>';
 
   const rng = computeXRange(selectedHoles());
@@ -6926,7 +7406,9 @@ function openInspector(name) {
   inspectDraft = {
     index: index,
     originalName: name,
-    hole: JSON.parse(JSON.stringify(state.data[index]))
+    hole: JSON.parse(JSON.stringify(state.data[index])),
+    /* Pristine copy, kept so a manual grade edit can be learned (FR-040). */
+    original: JSON.parse(JSON.stringify(state.data[index]))
   };
   delete inspectDraft.hole.validationStatus;    // recomputed on every render
   renderInspector();
@@ -6934,12 +7416,16 @@ function openInspector(name) {
 }
 
 function inspectBadgeHtml(v) {
-  if (v.status === VALIDATION_STATUS.COMPLETE) return '<span class="gi-status gi-ok">&#10003; Complete</span>';
+  const anomaly = (v.anomalies && v.anomalies.length)
+    ? ' <span class="gi-status gi-anomaly" title="' + esc(anomalyTooltip(v.anomalies)) + '">' +
+      esc(anomalyBadgeText(v.anomalies)) + '</span>'
+    : '';
+  if (v.status === VALIDATION_STATUS.COMPLETE) return '<span class="gi-status gi-ok">&#10003; Complete</span>' + anomaly;
   if (v.status === VALIDATION_STATUS.MISSING_COORDS) {
-    return '<span class="gi-status gi-nocoords">&#9888;&#65039; Missing Coords</span>';
+    return '<span class="gi-status gi-nocoords">&#9888;&#65039; Missing Coords</span>' + anomaly;
   }
-  if (v.status === VALIDATION_STATUS.WARNING) return '<span class="gi-status gi-warn">&#9888; Incomplete</span>';
-  return '<span class="gi-status gi-err">&#10060; Cannot be plotted</span>';
+  if (v.status === VALIDATION_STATUS.WARNING) return '<span class="gi-status gi-warn">&#9888; Incomplete</span>' + anomaly;
+  return '<span class="gi-status gi-err">&#10060; Cannot be plotted</span>' + anomaly;
 }
 
 /** Reads every input in the modal back into the draft (called before re-rendering). */
@@ -7505,6 +7991,22 @@ function saveInspector() {
   draft.eoh = toNum(draft.eoh) === null ? null : round3(toNum(draft.eoh));
   draft.validationStatus = validateBorehole(draft);
 
+  /* --- learn from this edit (FR-040): every manual GRADE change becomes a
+     few-shot rule for the next extraction on this machine. Depths below ground
+     are recorded, because that is the unit the vision prompt uses. ---------- */
+  const beforeStrata = (inspectDraft.original && Array.isArray(inspectDraft.original.strata))
+    ? inspectDraft.original.strata : [];
+  let learned = 0;
+  (draft.strata || []).forEach(function (s, i) {
+    const prev = beforeStrata[i];
+    if (!prev) return;
+    const was = canonGrade(prev.grade);
+    const now = canonGrade(s.grade);
+    if (!now || now === was) return;
+    learnCorrection(makeCorrectionRecord(draft, s.top, s.btm, now, was));
+    learned++;
+  });
+
   const wasSelected = state.selected.has(inspectDraft.originalName);
   state.data[inspectDraft.index] = draft;
   if (wasSelected) { state.selected.delete(inspectDraft.originalName); state.selected.add(draft.name); }
@@ -7514,7 +8016,9 @@ function saveInspector() {
   if (!$('modal-diag').hidden) runDiagnostics();
   closeModal('modal-inspect');
   showBanner('Saved ' + draft.name + ' — validation: ' + draft.validationStatus.status +
-    (draft.validationStatus.missingFields.length ? ' (' + draft.validationStatus.missingFields.join(', ') + ')' : '') + '.');
+    (draft.validationStatus.missingFields.length ? ' (' + draft.validationStatus.missingFields.join(', ') + ')' : '') +
+    (learned ? ' · learned ' + learned + ' correction rule' + (learned === 1 ? '' : 's') +
+      ' for future imports' : '') + '.');
   inspectDraft = null;
 }
 
