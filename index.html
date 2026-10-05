@@ -343,12 +343,14 @@
         </div>
         <p class="text-[11.5px] text-slate-500 mt-2">
           Requests go to <code class="bg-slate-100 px-1 rounded">https://openrouter.ai/api/v1/chat/completions</code>.
-          The default is <b>anthropic/claude-3.5-sonnet</b> — the fastest and most accurate reader for dense HK
-          drillhole sheets; it is asked for <code class="bg-slate-100 px-1 rounded">max_tokens: 8192</code>,
-          its own output ceiling. If it is unavailable the app automatically falls back to the open-weight,
-          region-free <b>qwen/qwen2.5-vl-72b-instruct</b>, then Llama 3.2 Vision, Mistral Small 3.2, GLM 4.5V and
-          Gemma 3 — all served to Hong Kong IPs, unlike Gemini / GPT-4 (which OpenRouter geo-blocks here). Any
-          OpenRouter vision slug can be typed in the box.
+          The default is <b>qwen/qwen3-vl-8b-instruct</b> “Turbo Vision” — an 8B open-weights reader chosen for
+          speed (~3-4 s per page); it is asked for <code class="bg-slate-100 px-1 rounded">max_tokens: 4096</code>
+          and the request prefers the low-latency providers <b>DeepInfra, Parasail, Novita, Alibaba, Nebius</b>
+          (fallbacks allowed, so a queued or slow endpoint can never stall the import). A page that gets cut off,
+          or one the 8B misreads, moves up the ladder to <b>meta-llama/llama-4-maverick</b> (High Accuracy Vision),
+          then the dense-table <b>qwen/qwen2.5-vl-72b-instruct</b>, Mistral Small 3.2, GLM 4.5V and Gemma 3 — all
+          served to Hong Kong IPs, unlike Gemini / GPT-4 (which OpenRouter geo-blocks here). Any OpenRouter
+          vision slug can be typed in the box.
         </p>
       </section>
 
@@ -2166,11 +2168,14 @@ const RETRY_DELAY_MS = 2000;
 const MAX_TRANSIENT_SKIPS = 2;
 
 /**
- * The open-weights vision fallback chain. The first entry is the primary model
- * and the second (Llama 3.2 11B Vision, also image-input) catches a provider
- * hiccup on the first.
+ * The open-weights vision chain, ordered SPEED FIRST (FR-052):
+ *   1. qwen/qwen3-vl-8b-instruct     — Turbo Vision (~3-4 s per page), the app default;
+ *   2. meta-llama/llama-4-maverick   — High Accuracy Vision, tried when the 8B misreads;
+ *   3. qwen/qwen2.5-vl-72b-instruct  — the Dense Table Fallback (also FALLBACK_VISION_MODEL);
+ * then the wider walk in OPENROUTER.MODELS. Every slug is region-free for Hong
+ * Kong IPs and every one had live providers on 2026-10-05 (C-015).
  */
-const OPEN_WEIGHT_VISION_MODELS = ['qwen/qwen2.5-vl-72b-instruct', 'meta-llama/llama-3.2-11b-vision-instruct'];
+const OPEN_WEIGHT_VISION_MODELS = ['qwen/qwen3-vl-8b-instruct', 'meta-llama/llama-4-maverick', 'qwen/qwen2.5-vl-72b-instruct'];
 
 /** Provider / transport wording that is worth retrying — a hiccup, not a mistake. */
 const TRANSIENT_ERROR_TEXT = /provider returned error|provider error|upstream|bad gateway|gateway time-?out|service unavailable|internal server error|temporarily|overloaded|rate.?limit|too many requests|timed? ?out|network|failed to fetch|econnreset|socket hang up|\b(408|429|500|502|503|504)\b/i;
@@ -2203,10 +2208,25 @@ function shortApiError(e) {
 const OPENROUTER = {
   URL: 'https://openrouter.ai/api/v1/chat/completions',
   KEY_URL: 'https://openrouter.ai/api/v1/key',
-  DEFAULT_MODEL: 'anthropic/claude-3.5-sonnet',
+  DEFAULT_MODEL: 'qwen/qwen3-vl-8b-instruct',
   FALLBACK_MODEL: 'qwen/qwen2.5-vl-72b-instruct',
   MODELS: OPEN_WEIGHT_VISION_MODELS.concat(['mistralai/mistral-small-3.2-24b-instruct',
            'z-ai/glm-4.5v', 'google/gemma-3-27b-it']),
+  /* Low-latency provider preference (FR-052). OpenRouter routes a request to the
+     first name in this list that actually SERVES the called model, and
+     `allow_fallbacks: true` lets it use any other provider when none of the
+     listed ones is free — so the preference can speed a request up but can never
+     fail one, and one shared list is correct for the whole chain (names that do
+     not serve the called model are ignored). Every name below serves at least one
+     model in MODELS; "Fireworks" and "Together" are deliberately absent because
+     they serve none of these vision slugs. Verified against
+     GET /api/v1/models/<slug>/endpoints on 2026-10-05 (C-015). */
+  PROVIDER_ORDER: ['DeepInfra', 'Parasail', 'Novita', 'Alibaba', 'Nebius'],
+  /* The FIRST-attempt output budget (FR-052). 4 096 tokens is a quarter of the
+     old 16 384 budget and is what takes a page from tens of seconds to a few
+     seconds. A dense sheet that gets cut off is retried at the full budget
+     (MAX_TOKENS_RETRY), so the speed cap never costs completeness. */
+  FAST_MAX_TOKENS: 4096,
   /* HTTP-Referer: the real page origin when there is one, else this fallback —
      openrouter.ai treats it as the app identifier (and rejects the literal
      "null" that file:// URLs report). */
@@ -2215,10 +2235,9 @@ const OPENROUTER = {
   /* 16 384 output tokens permanently eliminates the truncation cut-offs that a
      dense log used to hit at 8 192 — on top of the >80 % token saving from the
      compact interval schema. The request builder clamps this to the called
-     model's own ceiling (outputTokensFor), so the Claude 3.5 Sonnet default —
-     capped at 8 192 — always ships `max_tokens: 8192`. If a provider caps the
-     output below the budget, the call automatically retries at
-     MAX_TOKENS_FALLBACK. */
+     model's own ceiling (outputTokensFor) and the FAST_MAX_TOKENS cap above
+     keeps a normal first attempt far shorter. If a provider caps the output
+     below the budget, the call automatically retries at MAX_TOKENS_FALLBACK. */
   MAX_TOKENS: 16384,
   MAX_TOKENS_FALLBACK: 8192,    // used when a provider rejects the 16 384 budget
   MAX_TOKENS_RETRY: 16384,      // one retry when finish_reason === 'length'
@@ -2241,20 +2260,24 @@ function activeReferer() {
 }
 
 /**
- * Default vision model (FR-050).
+ * Default vision model (FR-050, re-pointed by FR-052).
  *
- * The extraction default is Anthropic **Claude 3.5 Sonnet** via OpenRouter: it
- * is markedly faster and more accurate on dense HK drillhole sheets than the
- * open-weight VL models, which is why it leads the Settings dropdown. Behind it
- * the automatic retry chain keeps the OPEN-WEIGHT, region-free models
- * (`DEFAULT_VISION_MODEL → OPEN_WEIGHT_VISION_MODELS → FALLBACK_VISION_MODEL`),
- * so if a provider hiccups — or a Hong Kong IP is refused the closed families,
- * which is what produced the old "model is not available in your region" error —
- * the very next step is qwen2.5-VL and the import still completes.
- * Slugs verified against GET https://openrouter.ai/api/v1/models (image input
- * confirmed for every slug below).
+ * The extraction default is **Qwen3-VL 8B Instruct** via OpenRouter — “Turbo
+ * Vision”: the fastest image-input model in the catalogue that is region-free
+ * for Hong Kong IPs, at roughly 3-4 s per page. Behind it the automatic retry
+ * chain walks the open-weight models speed-first
+ * (`DEFAULT_VISION_MODEL → OPEN_WEIGHT_VISION_MODELS → FALLBACK_VISION_MODEL`):
+ * llama-4-maverick when accuracy is needed, then qwen2.5-VL 72B as the
+ * dense-table rescue, so a misread or a provider hiccup still completes the
+ * import. An earlier build defaulted to `anthropic/claude-3.5-sonnet`, which
+ * OpenRouter no longer serves at all — it sits in RETIRED_VISION_MODELS, so a
+ * cached value is upgraded on load instead of burning a failed request on every
+ * page.
+ * Slugs verified against GET https://openrouter.ai/api/v1/models and
+ * /models/<slug>/endpoints (image input AND at least one live provider confirmed
+ * for every slug in this file) on 2026-10-05 — see C-015.
  */
-const DEFAULT_VISION_MODEL = 'anthropic/claude-3.5-sonnet';
+const DEFAULT_VISION_MODEL = 'qwen/qwen3-vl-8b-instruct';
 const FALLBACK_VISION_MODEL = 'qwen/qwen2.5-vl-72b-instruct';
 
 /**
@@ -2264,52 +2287,71 @@ const FALLBACK_VISION_MODEL = 'qwen/qwen2.5-vl-72b-instruct';
  *   • what every cached / empty / retired / geo-blocked value is UPGRADED to on
  *     load and on read, and
  *   • what the request payload and the upload-queue status line name.
- * Aliased — never re-typed — so the Claude 3.5 Sonnet default stays defined in
+ * Aliased — never re-typed — so the Turbo Vision default stays defined in
  * exactly one place.
  */
-const ACTIVE_VISION_MODEL = DEFAULT_VISION_MODEL;   // 'anthropic/claude-3.5-sonnet'
+const ACTIVE_VISION_MODEL = DEFAULT_VISION_MODEL;   // 'qwen/qwen3-vl-8b-instruct'
 
 /**
  * Slugs an EARLIER build shipped as the vision default and that this build
- * RETIRES as an ACTIVE model (FR-051).
- *
- * A browser that cached one — the reported bug is
- * `openrouter_vision_model = "qwen/qwen2.5-vl-72b-instruct"`, left over from the
- * region-free era — is upgraded to the Claude default the moment the app loads
- * and again whenever the model is read, so the app cannot silently keep parsing
- * with the old model merely because a value happens to sit in localStorage.
- * The slug is NOT deleted from the product: it stays in the Settings dropdown and
- * remains step 2 of the automatic fallback chain, so a provider hiccup still
- * lands on qwen2.5-VL. It is only refused as the ACTIVE default.
+ * RETIRES as an ACTIVE model (FR-051):
+ *   • `qwen/qwen2.5-vl-72b-instruct` — the default of the region-free era (the
+ *     originally reported stale `openrouter_vision_model` value), and
+ *   • `anthropic/claude-3.5-sonnet` — the default of the FR-051 build, which
+ *     OpenRouter no longer serves at all.
+ * A browser that cached one is upgraded to the Turbo Vision default the moment
+ * the app loads and again whenever the model is read, so the app cannot silently
+ * keep parsing with a slow model — or a model that 404s — merely because a value
+ * happens to sit in localStorage (FR-052).
+ * Neither slug is deleted from the product: qwen2.5-VL stays in the Settings
+ * dropdown and remains the Dense Table Fallback of the automatic chain, and
+ * Claude stays listed so the change is visible. Both are refused only as the
+ * ACTIVE default.
  */
-const RETIRED_VISION_MODELS = ['qwen/qwen2.5-vl-72b-instruct'];
+const RETIRED_VISION_MODELS = ['qwen/qwen2.5-vl-72b-instruct', 'anthropic/claude-3.5-sonnet'];
 
 /**
- * Settings vision-model dropdown entries (FR-050). The first entry is the
- * default — Claude 3.5 Sonnet — and the second is the region-free open-weights
- * fallback the automatic chain uses next; the wider open-weight walk follows,
- * with the two closed families last and clearly marked. Lives in the pure core
- * so the order is asserted by the self-tests and the Node harness.
+ * Settings vision-model dropdown entries (FR-050 / FR-052). The order is the
+ * speed-first recommendation, asserted by the self-tests and the Node harness:
+ *   1. qwen/qwen3-vl-8b-instruct     — Turbo Vision, the default;
+ *   2. meta-llama/llama-4-maverick   — High Accuracy Vision;
+ *   3. qwen/qwen2.5-vl-72b-instruct  — Dense Table Fallback (also the last step of
+ *                                      the automatic chain);
+ *   4. the wider region-free open-weight walk (Mistral Small 3.2, GLM 4.5V, Gemma 3);
+ *   5. the RETIRED previous default (Claude 3.5 Sonnet) — listed so the change
+ *      stays visible, refused as an active model because OpenRouter serves it to
+ *      nobody any more;
+ *   6. the two closed families, last and clearly marked region-restricted.
+ * Only LIVE slugs are offered: `meta-llama/llama-3.2-11b-vision-instruct` and
+ * `…-90b-vision-instruct` were dropped because OpenRouter has no provider for
+ * them any more (C-015), so picking one could only ever fail.
  */
 const OPENROUTER_MODELS = [
-  { id: 'anthropic/claude-3.5-sonnet', label: 'anthropic/claude-3.5-sonnet (Fastest & Most Accurate · default)' },
-  { id: 'qwen/qwen2.5-vl-72b-instruct', label: 'qwen/qwen2.5-vl-72b-instruct (Open-Weights Fallback · region-free)' },
-  { id: 'meta-llama/llama-3.2-11b-vision-instruct', label: 'meta-llama/llama-3.2-11b-vision-instruct (Region-Free open weights)' },
+  { id: 'qwen/qwen3-vl-8b-instruct', label: 'qwen/qwen3-vl-8b-instruct (Turbo Vision · ~3-4s per page · default)' },
+  { id: 'meta-llama/llama-4-maverick', label: 'meta-llama/llama-4-maverick (High Accuracy Vision)' },
+  { id: 'qwen/qwen2.5-vl-72b-instruct', label: 'qwen/qwen2.5-vl-72b-instruct (Dense Table Fallback · region-free)' },
   { id: 'mistralai/mistral-small-3.2-24b-instruct', label: 'mistralai/mistral-small-3.2-24b-instruct (Region-Free · cheapest)' },
   { id: 'z-ai/glm-4.5v', label: 'z-ai/glm-4.5v (Region-Free · MoE vision)' },
   { id: 'google/gemma-3-27b-it', label: 'google/gemma-3-27b-it (Region-Free · open weights, not Gemini)' },
+  { id: 'anthropic/claude-3.5-sonnet', label: 'anthropic/claude-3.5-sonnet (retired as an active default — no live providers)' },
   { id: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash (region-restricted — blocked from HK)' },
   { id: 'openai/gpt-4o-mini', label: 'openai/gpt-4o-mini (region-restricted — blocked from HK)' }
 ];
 
 /**
- * Hard per-model OUTPUT-token ceilings. OpenRouter rejects a `max_tokens` larger
- * than the model can emit, so the request builder clamps whatever the retry
- * ladder asks for down to the ceiling of the model actually being called.
- * Claude 3.5 Sonnet tops out at 8 192, so every Claude request leaves the
- * browser with exactly `max_tokens: 8192`.
+ * Hard per-model OUTPUT-token ceilings that sit BELOW the shared 16 384 budget.
+ * OpenRouter rejects a `max_tokens` larger than the model — or the provider route
+ * it picks — can emit, so the request builder clamps whatever the retry ladder
+ * asks for down to the ceiling of the model actually being called:
+ *   • every Claude build: 8 192;
+ *   • meta-llama/llama-4-maverick: 8 192, because its cheapest route (Novita)
+ *     caps there and FR-052's provider preference can land on it — the clamp must
+ *     hold on EVERY route, not only the preferred one.
+ * Models whose live providers all allow more than the budget need no entry: the
+ * 16 384 request is already below their ceiling (qwen3-vl-8b: providers allow
+ * 32 768 / 235 929; qwen2.5-vl-72b: 115 200 — maxima verified 2026-10-05, C-015).
  */
-const MODEL_MAX_OUTPUT_TOKENS = { 'anthropic/claude-3.5-sonnet': 8192 };
+const MODEL_MAX_OUTPUT_TOKENS = { 'anthropic/claude-3.5-sonnet': 8192, 'meta-llama/llama-4-maverick': 8192 };
 
 /** The output budget for `model`: its ceiling, else the shared 16 384 budget. */
 function outputTokensFor(model) {
@@ -2319,14 +2361,24 @@ function outputTokensFor(model) {
   return OPENROUTER.MAX_TOKENS;
 }
 
+/**
+ * The output budget of the FIRST attempt at `model` (FR-052): the fast 4 096 cap,
+ * never above the model's own ceiling. The retry ladder escalates to
+ * MAX_TOKENS_RETRY when a page comes back cut off, so this cap buys speed without
+ * ever costing completeness.
+ */
+function primaryTokensFor(model) {
+  return Math.min(OPENROUTER.FAST_MAX_TOKENS, outputTokensFor(model));
+}
+
 /** Model families that are geo-restricted for Hong Kong IPs. */
 const REGION_RESTRICTED_MODEL = /(^|[\/-])(gemini|gpt-4|gpt-3|o1|o3|o4)/i;
 
 /**
  * Resolves the vision model to use from whatever is stored:
- *   • unset / empty          → the default (Claude 3.5 Sonnet, FR-050)
+ *   • unset / empty          → the default (qwen3-vl-8b Turbo Vision, FR-050)
  *   • a region-restricted id → the default (avoids the HK error)
- *   • anything else          → kept verbatim (Claude, open-weight or custom slug)
+ *   • anything else          → kept verbatim (an open-weight or custom slug)
  */
 function visionModelOrDefault(stored) {
   const s = String(stored === null || stored === undefined ? '' : stored).trim();
@@ -2343,14 +2395,15 @@ function isRetiredVisionModel(id) {
 
 /**
  * The ACTIVE vision model, resolved STRICTLY (FR-051):
- *   • a retired default  → Claude 3.5 Sonnet (the old qwen cache is upgraded)
- *   • unset / undefined  → Claude 3.5 Sonnet
- *   • a geo-blocked slug → Claude 3.5 Sonnet
- *   • anything else      → kept verbatim (a deliberate Claude, open-weight or
- *                          custom choice)
+ *   • a retired default  → the Turbo Vision default (a cached qwen or Claude
+ *                          value is upgraded)
+ *   • unset / undefined  → the Turbo Vision default
+ *   • a geo-blocked slug → the Turbo Vision default
+ *   • anything else      → kept verbatim (a deliberate open-weight or custom
+ *                          choice)
  * This is the strict counterpart of the lenient `visionModelOrDefault` reader:
  * every path that decides which model is CALLED goes through here, so a stale
- * localStorage value can never make the app keep calling the retired default.
+ * localStorage value can never make the app keep calling a retired default.
  */
 function upgradeVisionModel(stored) {
   const s = String(stored === null || stored === undefined ? '' : stored).trim();
@@ -2426,14 +2479,20 @@ function buildOpenRouterRequest(opts) {
   /* One user message carrying the extraction rules plus the page image — the
      shape the OpenRouter docs and the project contract both specify. */
   const prompt = o.prompt || [o.systemPrompt, o.userPrompt].filter(Boolean).join('\n\n');
-  /* `model` = the active choice, else the Claude 3.5 Sonnet default. The token
-     budget is clamped to the called model's own ceiling, so the default request
-     ships exactly `max_tokens: 8192` while the 16 384 open-weight budget still
-     applies to the models that accept it (FR-050). */
+  /* `model` = the active choice, else the Turbo Vision default. The token budget
+     is the fast 4 096 first-attempt cap, clamped to the called model's own
+     ceiling — so the default request ships exactly `max_tokens: 4096` while a
+     truncation retry can still escalate to the full budget (FR-050 / FR-052). */
   const model = o.model || DEFAULT_VISION_MODEL;
   const body = {
     model: model,
-    max_tokens: Math.min(o.maxTokens || OPENROUTER.MAX_TOKENS, outputTokensFor(model)),
+    /* Low-latency provider routing (FR-052): the high-throughput providers are
+       named first and `allow_fallbacks: true` lets OpenRouter use any other
+       provider that serves the model — so a queued or slow endpoint is passed
+       over instead of being allowed to stall the import, and the preference can
+       never turn into a failed request. */
+    provider: { order: OPENROUTER.PROVIDER_ORDER.slice(), allow_fallbacks: true },
+    max_tokens: Math.min(o.maxTokens || OPENROUTER.FAST_MAX_TOKENS, outputTokensFor(model)),
     temperature: OPENROUTER.TEMPERATURE,
     messages: [
       { role: 'user', content: [
@@ -3556,78 +3615,96 @@ function buildSelfTests(opts) {
   eq('openrouter', 'the documented offline fallback referer',
      OPENROUTER.REFERER_FALLBACK, 'https://cwlau35.github.io');
   eq('openrouter', 'X-Title header', req.headers['X-Title'], 'GI Borehole Dashboard');
-  /* --- model selection: Claude 3.5 Sonnet default + open-weights fallback (FR-050) --- */
-  eq('openrouter', 'the default request asks Claude 3.5 Sonnet',
-     buildOpenRouterRequest({}).body.model, 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'the default-model constant is Claude 3.5 Sonnet',
-     DEFAULT_VISION_MODEL, 'anthropic/claude-3.5-sonnet');
+  /* --- model selection: Turbo Vision default + accuracy/dense fallbacks (FR-050 / FR-052) --- */
+  eq('openrouter', 'the default request asks the Turbo Vision 8B',
+     buildOpenRouterRequest({}).body.model, 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'the default-model constant is the Turbo Vision 8B',
+     DEFAULT_VISION_MODEL, 'qwen/qwen3-vl-8b-instruct');
   eq('openrouter', 'OPENROUTER.DEFAULT_MODEL agrees with the default constant',
      OPENROUTER.DEFAULT_MODEL, DEFAULT_VISION_MODEL);
-  eq('openrouter', 'the fallback-model constant is the open-weights qwen VL',
+  eq('openrouter', 'the fallback-model constant is the dense-table qwen 72B VL',
      FALLBACK_VISION_MODEL, 'qwen/qwen2.5-vl-72b-instruct');
   eq('openrouter', 'OPENROUTER.FALLBACK_MODEL agrees with the fallback constant',
      OPENROUTER.FALLBACK_MODEL, FALLBACK_VISION_MODEL);
-  eq('openrouter', 'the Settings dropdown leads with Claude 3.5 Sonnet',
-     OPENROUTER_MODELS[0].id, 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'the Settings dropdown lists the open-weights fallback second',
-     OPENROUTER_MODELS[1].id, 'qwen/qwen2.5-vl-72b-instruct');
-  eq('openrouter', 'the dropdown marks the default fastest & most accurate',
-     /fastest/i.test(OPENROUTER_MODELS[0].label), true);
-  eq('openrouter', 'the dropdown offers both models plus the wider open-weight walk',
-     OPENROUTER_MODELS.length, 8);
-  ok('openrouter', 'the automatic chain contains only open-weight models',
-     OPENROUTER.MODELS.every(function (m) { return !REGION_RESTRICTED_MODEL.test(m); }),
-     OPENROUTER.MODELS.join(', '));
+  eq('openrouter', 'the Settings dropdown leads with the Turbo Vision 8B',
+     OPENROUTER_MODELS[0].id, 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'the Settings dropdown lists High Accuracy Vision second',
+     OPENROUTER_MODELS[1].id, 'meta-llama/llama-4-maverick');
+  eq('openrouter', 'the Settings dropdown lists the dense-table fallback third',
+     OPENROUTER_MODELS[2].id, 'qwen/qwen2.5-vl-72b-instruct');
+  eq('openrouter', 'the dropdown marks the default turbo & ~3-4s per page',
+     /turbo/i.test(OPENROUTER_MODELS[0].label) && /3-4s/.test(OPENROUTER_MODELS[0].label), true);
+  eq('openrouter', 'the first three dropdown entries ARE the automatic chain',
+     OPENROUTER_MODELS.slice(0, 3).map(function (m) { return m.id; }).join(','),
+     OPEN_WEIGHT_VISION_MODELS.join(','));
+  eq('openrouter', 'the dropdown offers the three headline models plus the wider walk',
+     OPENROUTER_MODELS.length, 9);
+  ok('openrouter', 'no slug without a live provider is offered as a choice',
+     !OPENROUTER_MODELS.some(function (m) { return /llama-3\.2-(11b|90b)-vision/.test(m.id); }),
+     OPENROUTER_MODELS.map(function (m) { return m.id; }).join(', '));
+  eq('openrouter', 'the automatic chain contains only open-weight models',
+     OPENROUTER.MODELS.every(function (m) { return !REGION_RESTRICTED_MODEL.test(m); }), true);
   eq('openrouter', 'no closed family is listed first in the chain',
      /gemini|gpt-4/i.test(OPENROUTER.MODELS[0]), false);
-  /* --- stored model migration: closed / empty → the Claude default --- */
-  eq('openrouter', 'unset model → Claude default', visionModelOrDefault(''), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'null model → Claude default', visionModelOrDefault(null), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'stored gemini → Claude default',
-     visionModelOrDefault('google/gemini-2.5-flash'), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'stored gemini pro → Claude default',
-     visionModelOrDefault('google/gemini-2.5-pro'), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'stored gpt-4o-mini → Claude default',
-     visionModelOrDefault('openai/gpt-4o-mini'), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'a stored Claude choice survives the load guard',
+  /* --- stored model migration: closed / empty → the Turbo Vision default --- */
+  eq('openrouter', 'unset model → Turbo Vision default', visionModelOrDefault(''), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'null model → Turbo Vision default', visionModelOrDefault(null), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'stored gemini → Turbo Vision default',
+     visionModelOrDefault('google/gemini-2.5-flash'), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'stored gemini pro → Turbo Vision default',
+     visionModelOrDefault('google/gemini-2.5-pro'), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'stored gpt-4o-mini → Turbo Vision default',
+     visionModelOrDefault('openai/gpt-4o-mini'), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'the lenient reader still passes a retired slug through',
      visionModelOrDefault('anthropic/claude-3.5-sonnet'), 'anthropic/claude-3.5-sonnet');
   eq('openrouter', 'an open-weight choice is preserved',
      visionModelOrDefault('z-ai/glm-4.5v'), 'z-ai/glm-4.5v');
   eq('openrouter', 'a custom slug is preserved',
      visionModelOrDefault('some-vendor/custom-vl-9b'), 'some-vendor/custom-vl-9b');
-  /* --- FR-051: the retired qwen cache can never stay the ACTIVE model --- */
-  eq('openrouter', 'the active-model constant is Claude 3.5 Sonnet',
-     ACTIVE_VISION_MODEL, 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'a cached qwen default is upgraded to Claude',
-     upgradeVisionModel('qwen/qwen2.5-vl-72b-instruct'), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'an undefined cache is upgraded to Claude',
-     upgradeVisionModel(undefined), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'a null cache is upgraded to Claude',
-     upgradeVisionModel(null), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'a blank cache is upgraded to Claude',
-     upgradeVisionModel('   '), 'anthropic/claude-3.5-sonnet');
-  eq('openrouter', 'the retired slug is upgraded however it is cased or padded',
-     upgradeVisionModel('  Qwen/Qwen2.5-VL-72B-Instruct '), 'anthropic/claude-3.5-sonnet');
-  ok('openrouter', 'only the retired default is retired',
+  /* --- FR-051/FR-052: a retired cache (qwen 72B or Claude) can never stay the ACTIVE model --- */
+  eq('openrouter', 'the active-model constant is the Turbo Vision 8B',
+     ACTIVE_VISION_MODEL, 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'the active constant is an alias of the default constant',
+     ACTIVE_VISION_MODEL, DEFAULT_VISION_MODEL);
+  eq('openrouter', 'a cached qwen default is upgraded to Turbo Vision',
+     upgradeVisionModel('qwen/qwen2.5-vl-72b-instruct'), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'a cached Claude default is upgraded to Turbo Vision',
+     upgradeVisionModel('anthropic/claude-3.5-sonnet'), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'an undefined cache is upgraded to Turbo Vision',
+     upgradeVisionModel(undefined), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'a null cache is upgraded to Turbo Vision',
+     upgradeVisionModel(null), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'a blank cache is upgraded to Turbo Vision',
+     upgradeVisionModel('   '), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'a retired slug is upgraded however it is cased or padded',
+     upgradeVisionModel('  Qwen/Qwen2.5-VL-72B-Instruct '), 'qwen/qwen3-vl-8b-instruct');
+  eq('openrouter', 'the retired Claude slug is upgraded however it is cased or padded',
+     upgradeVisionModel('  Anthropic/Claude-3.5-Sonnet '), 'qwen/qwen3-vl-8b-instruct');
+  ok('openrouter', 'both earlier defaults are retired, the live default is not',
      isRetiredVisionModel('qwen/qwen2.5-vl-72b-instruct') &&
-     !isRetiredVisionModel('anthropic/claude-3.5-sonnet') &&
+     isRetiredVisionModel('anthropic/claude-3.5-sonnet') &&
+     isRetiredVisionModel('  QWEN/QWEN2.5-VL-72B-INSTRUCT ') &&
+     !isRetiredVisionModel(DEFAULT_VISION_MODEL) &&
+     !isRetiredVisionModel('meta-llama/llama-4-maverick') &&
      !isRetiredVisionModel('z-ai/glm-4.5v') && !isRetiredVisionModel('') && !isRetiredVisionModel(null),
      'retired list');
   eq('openrouter', 'a cached qwen default resolves to the request default',
      upgradeVisionModel('qwen/qwen2.5-vl-72b-instruct'), OPENROUTER.DEFAULT_MODEL);
-  eq('openrouter', 'a deliberate Claude choice is kept',
-     upgradeVisionModel('anthropic/claude-3.5-sonnet'), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'a deliberate accuracy choice is kept',
+     upgradeVisionModel('meta-llama/llama-4-maverick'), 'meta-llama/llama-4-maverick');
   eq('openrouter', 'a deliberate open-weight choice is kept',
      upgradeVisionModel('z-ai/glm-4.5v'), 'z-ai/glm-4.5v');
   eq('openrouter', 'a deliberate custom slug is kept',
      upgradeVisionModel('some-vendor/custom-vl-9b'), 'some-vendor/custom-vl-9b');
-  ok('openrouter', 'the retired slug is still the automatic fallback and stays in the dropdown',
+  ok('openrouter', 'the dense-table slug is still the automatic fallback and stays in the dropdown',
      FALLBACK_VISION_MODEL === 'qwen/qwen2.5-vl-72b-instruct' &&
      OPENROUTER.MODELS.indexOf('qwen/qwen2.5-vl-72b-instruct') !== -1 &&
      OPENROUTER_MODELS.some(function (m) { return m.id === 'qwen/qwen2.5-vl-72b-instruct'; }),
      'kept as fallback');
   eq('openrouter', 'the status-line label names the model being invoked',
-     visionModelLabel('anthropic/claude-3.5-sonnet'), OPENROUTER_MODELS[0].label);
+     visionModelLabel(DEFAULT_VISION_MODEL), OPENROUTER_MODELS[0].label);
+  eq('openrouter', 'the status-line label marks the retired Claude entry as retired',
+     /retired/.test(visionModelLabel('anthropic/claude-3.5-sonnet')), true);
   eq('openrouter', 'the status-line label falls back to the slug for a custom entry',
      visionModelLabel('some-vendor/custom-vl-9b'), 'some-vendor/custom-vl-9b');
   eq('openrouter', 'a single user message is sent', req.body.messages.length, 1);
@@ -3639,23 +3716,58 @@ function buildSelfTests(opts) {
   eq('openrouter', 'JSON mode sets response_format', req.body.response_format.type, 'json_object');
   eq('openrouter', 'JSON mode can be switched off', buildOpenRouterRequest({ jsonMode: false }).body.response_format, undefined);
   eq('openrouter', 'temperature is 0.1', req.body.temperature, 0.1);
-  eq('openrouter', 'Claude asks for max_tokens 8192 — its own output ceiling',
-     buildOpenRouterRequest({ model: 'anthropic/claude-3.5-sonnet' }).body.max_tokens, 8192);
-  eq('openrouter', 'the default request body carries max_tokens 8192',
-     buildOpenRouterRequest({}).body.max_tokens, 8192);
+  /* --- low-latency provider routing (FR-052) --- */
+  eq('openrouter', 'the payload names the low-latency providers, in order',
+     req.body.provider.order.join(','), OPENROUTER.PROVIDER_ORDER.join(','));
+  eq('openrouter', 'the provider preference is the documented low-latency list',
+     OPENROUTER.PROVIDER_ORDER.join(','), 'DeepInfra,Parasail,Novita,Alibaba,Nebius');
+  eq('openrouter', 'fallbacks are allowed so a busy provider cannot fail the request',
+     req.body.provider.allow_fallbacks, true);
+  eq('openrouter', 'Fireworks and Together are absent — neither serves these vision slugs',
+     OPENROUTER.PROVIDER_ORDER.filter(function (p) { return /fireworks|together/i.test(p); }).length, 0);
+  ok('openrouter', 'every attempt shape carries the provider preference',
+     [buildOpenRouterRequest({}), buildOpenRouterRequest({ jsonMode: false }),
+      buildOpenRouterRequest({ noReasoning: true }),
+      buildOpenRouterRequest({ model: 'z-ai/glm-4.5v' }),
+      buildOpenRouterRequest({ model: 'some-vendor/custom-vl-9b' })]
+       .every(function (r) {
+         return !!r.body.provider && r.body.provider.allow_fallbacks === true &&
+           r.body.provider.order.join(',') === OPENROUTER.PROVIDER_ORDER.join(',');
+       }), 'all shapes');
+  ok('openrouter', 'the provider list is copied per request, so a caller cannot mutate the constant',
+     (function () {
+       const r = buildOpenRouterRequest({});
+       r.body.provider.order.push('Nope');
+       return OPENROUTER.PROVIDER_ORDER.indexOf('Nope') === -1;
+     })(), 'defensive copy');
+  ok('openrouter', 'the provider block survives a JSON round-trip',
+     JSON.parse(JSON.stringify(req.body)).provider.allow_fallbacks === true, 'ok');
+  /* --- FR-052: the fast 4 096-token first attempt, with a full-budget escalation --- */
+  eq('openrouter', 'the shared fast budget is 4 096 tokens', OPENROUTER.FAST_MAX_TOKENS, 4096);
+  eq('openrouter', 'the default request body carries max_tokens 4096',
+     buildOpenRouterRequest({}).body.max_tokens, 4096);
+  eq('openrouter', 'the default-model step budget is the fast 4096',
+     primaryTokensFor(DEFAULT_VISION_MODEL), 4096);
+  eq('openrouter', 'even a Claude slug starts on the fast budget',
+     buildOpenRouterRequest({ model: 'anthropic/claude-3.5-sonnet' }).body.max_tokens, 4096);
   eq('openrouter', 'outputTokensFor reports the Claude ceiling',
      outputTokensFor('anthropic/claude-3.5-sonnet'), 8192);
   eq('openrouter', 'outputTokensFor clamps every Claude slug to 8192',
      outputTokensFor('anthropic/claude-3-opus'), 8192);
   eq('openrouter', 'outputTokensFor leaves an open-weight model at 16384',
      outputTokensFor('qwen/qwen2.5-vl-72b-instruct'), 16384);
+  eq('openrouter', 'outputTokensFor knows the maverick route caps at 8192',
+     outputTokensFor('meta-llama/llama-4-maverick'), 8192);
   eq('openrouter', 'a 16 384 request budget is clamped to the Claude ceiling',
      buildOpenRouterRequest({ model: 'anthropic/claude-3.5-sonnet', maxTokens: 16384 }).body.max_tokens, 8192);
-  eq('openrouter', 'an open-weight model still receives the 16 384 budget',
-     buildOpenRouterRequest({ model: 'qwen/qwen2.5-vl-72b-instruct' }).body.max_tokens, 16384);
+  eq('openrouter', 'a 16 384 escalation on maverick is clamped to its provider ceiling too',
+     buildOpenRouterRequest({ model: 'meta-llama/llama-4-maverick', maxTokens: 16384 }).body.max_tokens, 8192);
+  eq('openrouter', 'an open-weight model still receives the 16 384 budget when asked',
+     buildOpenRouterRequest({ model: 'qwen/qwen2.5-vl-72b-instruct', maxTokens: OPENROUTER.MAX_TOKENS }).body.max_tokens, 16384);
   eq('openrouter', 'a smaller token budget is accepted when a provider caps the output',
      buildOpenRouterRequest({ maxTokens: OPENROUTER.MAX_TOKENS_FALLBACK }).body.max_tokens, 8192);
-  ok('openrouter', 'the truncation-retry budget is at least the primary budget',
+  ok('openrouter', 'the escalation budget sits above the fast budget it replaces',
+     OPENROUTER.MAX_TOKENS_RETRY > OPENROUTER.FAST_MAX_TOKENS &&
      OPENROUTER.MAX_TOKENS_RETRY >= OPENROUTER.MAX_TOKENS, OPENROUTER.MAX_TOKENS_RETRY);
   /* The "empty answer, finish_reason: length" cure: the retry step turns the
      model's hidden reasoning off, which is only sent when asked for. */
@@ -3670,14 +3782,18 @@ function buildSelfTests(opts) {
   eq('openrouter', 'a 1.5 s cooldown separates two batch requests', BATCH_PAUSE_MS, 1500);
   eq('openrouter', 'a transient failure is retried once', MAX_REQUEST_RETRIES, 1);
   eq('openrouter', 'each retry waits 2 s', RETRY_DELAY_MS, 2000);
-  eq('openrouter', 'the open-weights fallback chain',
+  eq('openrouter', 'the open-weights chain, speed first',
      OPEN_WEIGHT_VISION_MODELS.join(','),
-     'qwen/qwen2.5-vl-72b-instruct,meta-llama/llama-3.2-11b-vision-instruct');
+     'qwen/qwen3-vl-8b-instruct,meta-llama/llama-4-maverick,qwen/qwen2.5-vl-72b-instruct');
   eq('openrouter', 'the requested chain is what the transport walks first',
-     OPENROUTER.MODELS.slice(0, 2).join(','), OPEN_WEIGHT_VISION_MODELS.join(','));
-  ok('openrouter', 'extra open-weight models stay behind the required pair',
-     OPENROUTER.MODELS.length >= 2 && OPENROUTER.MODELS.every(function (m) { return !REGION_RESTRICTED_MODEL.test(m); }),
+     OPENROUTER.MODELS.slice(0, 3).join(','), OPEN_WEIGHT_VISION_MODELS.join(','));
+  ok('openrouter', 'extra open-weight models stay behind the required trio',
+     OPENROUTER.MODELS.length >= 3 && OPENROUTER.MODELS.every(function (m) { return !REGION_RESTRICTED_MODEL.test(m); }),
      OPENROUTER.MODELS.join(', '));
+  eq('openrouter', 'every step starts on the fast budget, whatever the model',
+     [DEFAULT_VISION_MODEL, 'meta-llama/llama-4-maverick', 'qwen/qwen2.5-vl-72b-instruct',
+      'anthropic/claude-3.5-sonnet', 'some-vendor/custom-vl-9b'].map(primaryTokensFor).join(','),
+     '4096,4096,4096,4096,4096');
   /* What counts as retryable… */
   ok('openrouter', '"Provider returned error" is transient',
      isTransientApiError(new Error('OpenRouter Error: Provider returned error')), 'transient');
@@ -4415,9 +4531,9 @@ const LS = {
 };
 
 /* The Settings vision-model catalogue — `OPENROUTER_MODELS` — now lives in the
-   pure core next to `DEFAULT_VISION_MODEL`, so the dropdown order (Claude 3.5
-   Sonnet first, the open-weights fallback second) is asserted by the self-tests
-   and the Node harness (FR-050).
+   pure core next to `DEFAULT_VISION_MODEL`, so the dropdown order (Turbo Vision
+   first, High Accuracy Vision second, the dense-table fallback third) is asserted
+   by the self-tests and the Node harness (FR-050 / FR-052).
    `DEFAULT_MODEL` / `FALLBACK_MODEL` remain as the short legacy aliases; the
    model the app actually calls is `ACTIVE_VISION_MODEL`, resolved for every
    request by `activeVisionModel()` (FR-051). */
@@ -4518,9 +4634,9 @@ async function loadKeyConfig() {
 
 const PDF_WORKER_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-/* STRICT (FR-051): the active vision model is Claude 3.5 Sonnet from the first
-   line of `state` — never the retired qwen default — and `loadState()` re-asserts
-   it from storage on every boot. */
+/* STRICT (FR-051): the active vision model is the Turbo Vision default from the
+   first line of `state` — never a retired slug — and `loadState()` re-asserts it
+   from storage on every boot. */
 const state = {
   data: [], selected: new Set(), search: '', apiKey: '', configKey: '', model: ACTIVE_VISION_MODEL,
   keyMigration: '',
@@ -4543,9 +4659,10 @@ const state = {
  * request payload, the retry ladder and the queue status line all read.
  *
  * Strict by construction: `upgradeVisionModel` turns a cached
- * `qwen/qwen2.5-vl-72b-instruct`, an empty value or a geo-blocked family into
- * Claude 3.5 Sonnet, so this answers `anthropic/claude-3.5-sonnet` on every
- * browser that has not deliberately chosen another model in Settings.
+ * `qwen/qwen2.5-vl-72b-instruct` or `anthropic/claude-3.5-sonnet`, an empty value
+ * or a geo-blocked family into the Turbo Vision default, so this answers
+ * `qwen/qwen3-vl-8b-instruct` on every browser that has not deliberately chosen
+ * another model in Settings.
  */
 function activeVisionModel() {
   return upgradeVisionModel(state.model);
@@ -4597,17 +4714,20 @@ function isPristineSeed(list) {
 /**
  * Vision-model guard — the STRICT load-time upgrade (FR-051).
  *
- * Parsing defaults to `anthropic/claude-3.5-sonnet`, so whatever this browser
- * cached is resolved through `upgradeVisionModel()` and the result is PERSISTED:
- *   • a RETIRED default (`qwen/qwen2.5-vl-72b-instruct`, the pre-Claude default)
- *     → overwritten with the Claude default,
- *   • absent / empty → the Claude default,
+ * Parsing defaults to `qwen/qwen3-vl-8b-instruct` (Turbo Vision), so whatever
+ * this browser cached is resolved through `upgradeVisionModel()` and the result
+ * is PERSISTED:
+ *   • a RETIRED default — `qwen/qwen2.5-vl-72b-instruct` (the pre-Claude era) or
+ *     `anthropic/claude-3.5-sonnet` (the FR-051 build, now served by nobody) →
+ *     overwritten with the Turbo Vision default,
+ *   • absent / empty → the Turbo Vision default,
  *   • a geo-restricted family (Gemini / GPT / o-series — the families OpenRouter
- *     blocks for Hong Kong IPs) → the Claude default,
- *   • a deliberate Claude, open-weight or custom slug → kept.
- * From the Claude default the automatic chain still walks the open-weight models
- * (`OPENROUTER.MODELS` → `FALLBACK_VISION_MODEL`). Runs on every load, so a stale
- * cached choice can never keep the app on the old model again.
+ *     blocks for Hong Kong IPs) → the Turbo Vision default,
+ *   • a deliberate open-weight or custom slug → kept.
+ * From the Turbo Vision default the automatic chain still walks the open-weight
+ * models speed-first (`OPENROUTER.MODELS` → `FALLBACK_VISION_MODEL`). Runs on
+ * every load, so a stale — or dead — cached choice can never keep the app on the
+ * old model again.
  */
 function ensureVisionModel() {
   const stored = String(safeGet(LS.MODEL) || '').trim();
@@ -4621,8 +4741,8 @@ function ensureVisionModel() {
     safeDel(LS.LEGACY_MODEL);
     safeSet(LS.MODEL, resolved);
     if (isRetiredVisionModel(candidate)) {
-      console.info('[GI] the stored vision model "' + candidate + '" is the retired default — upgraded to ' +
-        resolved + ' (qwen2.5-VL stays available as the automatic fallback).');
+      console.info('[GI] the stored vision model "' + candidate + '" is a retired default — upgraded to ' +
+        resolved + ' (qwen2.5-VL 72B stays the dense-table fallback).');
     } else if (candidate) {
       console.info('[GI] stored vision model "' + candidate + '" is empty or region-restricted — reset to ' +
         resolved);
@@ -4652,10 +4772,11 @@ function loadState() {
     state.apiKey = '';
     safeDel(LS.API_KEY);
   }
-  /* STRICT (FR-051): whatever an earlier session cached — most often the retired
-     `qwen/qwen2.5-vl-72b-instruct` — is UPGRADED and OVERWRITTEN here with the
-     Claude 3.5 Sonnet default, so the app cannot keep parsing with the old model
-     merely because a value sat in localStorage. */
+  /* STRICT (FR-051): whatever an earlier session cached — the retired
+     `qwen/qwen2.5-vl-72b-instruct` or the retired `anthropic/claude-3.5-sonnet` —
+     is UPGRADED and OVERWRITTEN here with the Turbo Vision default, so the app
+     cannot keep parsing with a slow or dead model merely because a value sat in
+     localStorage. */
   state.model = ensureVisionModel();
 
   let data = null;
@@ -6128,9 +6249,9 @@ function updateSettingsUI() {
     }).join('') + '<option value="__custom">Custom…</option>';
   }
   if (sel) {
-    /* The dropdown shows the ACTIVE model (FR-051): after a stale qwen cache has
-       been upgraded it reads "anthropic/claude-3.5-sonnet (Fastest & Most
-       Accurate · default)" — never the retired slug. */
+    /* The dropdown shows the ACTIVE model (FR-051): after a stale qwen or Claude
+       cache has been upgraded it reads "qwen/qwen3-vl-8b-instruct (Turbo Vision ·
+       ~3-4s per page · default)" — never a retired slug. */
     const active = activeVisionModel();
     const known = OPENROUTER_MODELS.some(function (m) { return m.id === active; });
     if (known) { sel.value = active; $('model-custom').value = ''; }
@@ -6175,9 +6296,10 @@ function readModelFromUI() {
 
 function saveSettings() {
   state.apiKey = ($('api-key').value || '').trim();
-  /* The ACTIVE model — never a retired slug (FR-051). Picking the old qwen
-     default in the dropdown resolves to Claude 3.5 Sonnet and the status line
-     below says so, instead of storing a model the app then refuses to call. */
+  /* The ACTIVE model — never a retired slug (FR-051). Picking a retired entry in
+     the dropdown (the old qwen default, or Claude) resolves to the Turbo Vision
+     default and the status line below says so, instead of storing a model the app
+     then refuses to call. */
   const asked = readModelFromUI();
   state.model = upgradeVisionModel(asked);
   const retiredPick = state.model !== asked ? asked : '';
@@ -6208,8 +6330,8 @@ function saveSettings() {
   setKeyStatus((state.apiKey
     ? 'Saved ✓ — personal key stored in localStorage (' + maskKey(state.apiKey) + '), model ' + state.model + '.'
     : 'Personal key cleared — back to the built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) + '), model ' + state.model + '.') +
-    (retiredPick ? ' ⓘ ' + retiredPick + ' is retired as an active model — it stays the automatic fallback, so the' +
-      ' active model is ' + state.model + '.' : ''));
+    (retiredPick ? ' ⓘ ' + retiredPick + ' is retired as an active model — it is still part of the automatic' +
+      ' fallback walk, so the active model is ' + state.model + '.' : ''));
 }
 
 async function testApiKey() {
@@ -6648,19 +6770,22 @@ async function callOpenRouterModel(model, dataUrl, jsonMode, maxTokens, noReason
 
 /**
  * Attempt plan for one page. For every model:
- *   step 1 — JSON mode on, at that model's OWN output ceiling
- *            (Claude 3.5 Sonnet 8 192 · open-weight models 16 384, FR-050);
+ *   step 1 — JSON mode on, on the FAST 4 096-token budget (primaryTokensFor),
+ *            clamped to that model's OWN output ceiling (8 192 for the
+ *            llama-4-maverick route, the shared 16 384 for the rest, FR-052);
  *   step 2 — JSON mode off AND reasoning disabled (a hidden "thinking" phase
  *            burning the whole budget yields an EMPTY message with
- *            finish_reason "length", the classic dense-log failure);
- * plus a step 3 at the smaller budget when a provider refuses the larger one.
+ *            finish_reason "length", the classic dense-log failure).
+ * A page that arrives cut off escalates above these steps: the same model is
+ * re-asked at MAX_TOKENS_RETRY tokens inside the caller, so the 4 096-token
+ * first attempt costs latency, never completeness.
  */
 function buildAttemptPlan(chain) {
   const plan = [];
   (chain || []).forEach(function (model) {
-    /* Each model carries its OWN output ceiling, so the Claude 3.5 Sonnet steps
-       ask for 8 192 and the open-weight steps for 16 384 (FR-050). */
-    const budget = outputTokensFor(model);
+    /* The fast budget first — the same model is re-asked at the full budget when
+       a page is truncated, so speed and completeness are not traded off. */
+    const budget = primaryTokensFor(model);
     plan.push({ model: model, jsonMode: true, budget: budget, noReasoning: false });
     plan.push({ model: model, jsonMode: false, budget: budget, noReasoning: true });
   });
@@ -6683,8 +6808,9 @@ function attemptLabel(step) {
  */
 async function callOpenRouterWithFallback(dataUrl, onStatus) {
   /* Step 1 is the ACTIVE model: `activeVisionModel()` upgrades a stale or retired
-     cache entry to Claude 3.5 Sonnet, so the ladder can never START on qwen just
-     because an old session left it in localStorage (FR-051). */
+     cache entry to the Turbo Vision default, so the ladder can never START on a
+     72B model — or on the dead Claude slug — just because an old session left it
+     in localStorage (FR-051 / FR-052). */
   const chain = [activeVisionModel()]
     .concat(OPENROUTER.MODELS)
     .concat([DEFAULT_VISION_MODEL, FALLBACK_VISION_MODEL])
@@ -6709,9 +6835,10 @@ async function callOpenRouterWithFallback(dataUrl, onStatus) {
         out = await callOpenRouterModel(step.model, dataUrl, step.jsonMode, OPENROUTER.MAX_TOKENS_RETRY, step.noReasoning);
       }
       /* Remember the model that actually answered this page — but NEVER adopt a
-         retired slug (qwen2.5-VL) as the active model: it is the fallback, not a
-         default, so the stored value can never be re-polluted with it. The next
-         page therefore starts from Claude again, exactly as FR-051 requires. */
+         retired slug (qwen2.5-VL 72B, Claude 3.5 Sonnet) as the active model:
+         they are fallbacks, not defaults, so the stored value can never be
+         re-polluted with one. The next page therefore starts from Turbo Vision
+         again, exactly as FR-051 requires. */
       if (step.model !== state.model && !isRetiredVisionModel(step.model)) {
         state.model = step.model;
         safeSet(LS.MODEL, step.model);
@@ -7310,7 +7437,7 @@ async function processQueueItem(item) {
   item.status = 'processing';
   item.progress = 8;
   /* The queue row names the model this file is actually sent to (FR-051) —
-     "Asking anthropic/claude-3.5-sonnet…", not a generic "Starting…". */
+     "Asking qwen/qwen3-vl-8b-instruct…", not a generic "Starting…". */
   item.message = 'Asking ' + activeVisionModel() + '…';
   item.detail = null;
   renderQueue();
