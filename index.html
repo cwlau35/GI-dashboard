@@ -87,6 +87,12 @@
   /* -------- physical data-anomaly badge (never a hard error) -------- */
   .gi-anomaly { color: #7c2d12; background: #ffedd5; border: 1px solid #fdba74; }
 
+  /* -------- map print host: only used while capturing the PDF sheet -------
+     It sits above the page but under the modal (z-index 1000), so the
+     temporarily re-fitted map is never visible to the user. */
+  .gi-map-print-host { position: fixed; left: 0; top: 0; z-index: 1; overflow: hidden;
+    background: #e2e8f0; pointer-events: none; }
+
   /* -------- resizable layout (two-axis splitters) -------- */
   .splitter { flex: none; background: #e2e8f0; position: relative; touch-action: none; z-index: 700; transition: background-color .12s ease; }
   .splitter:hover, .splitter.dragging { background: #93c5fd; }
@@ -195,7 +201,7 @@
       <div class="grid grid-cols-2 gap-1 mt-2">
         <button id="btn-new-page" type="button" class="btn btn-ghost py-1 text-[11px]" title="Clear all imported boreholes and reset the workspace">New Page</button>
         <button id="btn-share" type="button" class="btn btn-ghost py-1 text-[11px]" title="Encode the current view into a shareable link">Save &amp; Share</button>
-        <button id="btn-export-pdf" type="button" class="btn btn-ghost py-1 text-[11px]" title="Export the active chart as an A4 landscape PDF">Export PDF</button>
+        <button id="btn-export-pdf" type="button" class="btn btn-ghost py-1 text-[11px]" title="Export PDF — choose which sheets (map / profile / cross-section) and orientation, then A4">Export PDF</button>
         <button id="btn-export-summary" type="button" class="btn btn-ghost py-1 text-[11px]"
           title="Export Borehole Summary Table (CSV / Excel) — Hole ID, Easting, Northing, GL, Fill Base, Top of Grade III, Top of Grade II and EOH for every hole">Summary CSV</button>
       </div>
@@ -453,6 +459,59 @@
         <span id="share-status" class="text-[11.5px] text-slate-500"></span>
       </div>
       <p id="share-summary" class="text-[11.5px] text-slate-600"></p>
+    </div>
+  </div>
+</div>
+
+<!-- ========================== MODAL: EXPORT PDF OPTIONS ========================== -->
+<div id="modal-export" class="modal" hidden>
+  <div class="modal-backdrop" data-close="modal-export"></div>
+  <div class="modal-panel fade-in" role="dialog" aria-modal="true" aria-labelledby="export-title">
+    <div class="px-4 py-3 border-b border-slate-200 flex items-center">
+      <h2 id="export-title" class="font-bold text-slate-900">Export PDF Options</h2>
+      <button type="button" class="ml-auto btn btn-ghost h-7 w-7 text-slate-500" data-close="modal-export" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body space-y-5">
+      <section>
+        <p class="font-semibold text-slate-700 mb-2">Sheets to include</p>
+        <div class="space-y-2">
+          <label class="flex items-start gap-2 text-[12px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer">
+            <input id="exp-sheet-map" type="checkbox" data-sheet="map" class="gi-cb mt-0.5 h-4 w-4 rounded border-slate-300" checked />
+            <span><b>Site Location Plan (Map View)</b>
+              <span class="block text-[11px] text-slate-500">The Leaflet map captured at print resolution, fitted to the active boreholes and the A-A′ alignment.</span></span>
+          </label>
+          <label class="flex items-start gap-2 text-[12px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer">
+            <input id="exp-sheet-profile" type="checkbox" data-sheet="profile" class="gi-cb mt-0.5 h-4 w-4 rounded border-slate-300" checked />
+            <span><b>Subsurface Benchmarking Profile (Strip Profile)</b>
+              <span class="block text-[11px] text-slate-500">One block of five strip bars per borehole — Geol. Grade, TCR, SCR, RQD and FI — with the dual legend band.</span></span>
+          </label>
+          <label class="flex items-start gap-2 text-[12px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer">
+            <input id="exp-sheet-section" type="checkbox" data-sheet="section" class="gi-cb mt-0.5 h-4 w-4 rounded border-slate-300" checked />
+            <span><b>Geotechnical Cross-Section (Section A-A′)</b>
+              <span class="block text-[11px] text-slate-500">Strip columns at true horizontal chainage with the interpolated ground surface and Grade III rockhead.</span></span>
+          </label>
+        </div>
+      </section>
+      <section>
+        <p class="font-semibold text-slate-700 mb-2">Orientation</p>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex items-center gap-2 text-[12px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer">
+            <input id="exp-orient-landscape" type="radio" name="exp-orient" value="landscape" class="gi-cb h-4 w-4" checked />
+            <span><b>Landscape</b><span class="block text-[11px] text-slate-500">A4 · 297 × 210 mm</span></span>
+          </label>
+          <label class="flex items-center gap-2 text-[12px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer">
+            <input id="exp-orient-portrait" type="radio" name="exp-orient" value="portrait" class="gi-cb h-4 w-4" />
+            <span><b>Portrait</b><span class="block text-[11px] text-slate-500">A4 · 210 × 297 mm</span></span>
+          </label>
+        </div>
+      </section>
+      <div id="export-preview" class="text-[11.5px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"></div>
+    </div>
+    <div class="px-4 py-3 border-t border-slate-200 flex items-center gap-2 bg-slate-50">
+      <span class="text-[11px] text-slate-500">Each page is stamped “Sheet X of Y - GI Dashboard”.</span>
+      <span id="export-status" class="text-[11px] text-slate-500"></span>
+      <button type="button" class="ml-auto btn btn-ghost px-3 py-1.5 text-[12.5px]" data-close="modal-export">Cancel</button>
+      <button id="btn-export-generate" type="button" class="btn btn-primary px-3 py-1.5 text-[12.5px]">Generate PDF</button>
     </div>
   </div>
 </div>
@@ -1132,8 +1191,9 @@ function mapIntervals(arr, label, warnings) {
  *
  * `from` / `to` (and `eoh`) are DEPTHS BELOW GROUND, so RL = GL - depth. The
  * detection is deterministic and also copes with a model that returns
- * elevations instead: when the chain does not start just below 0 and fit inside
- * the ground level, the numbers are taken as RLs unchanged. EOH is accepted in
+ * elevations instead: when the chain does not start just below 0, contains a
+ * negative reading, or neither fits inside the ground level nor matches the
+ * reported EOH, the numbers are taken as RLs unchanged. EOH is accepted in
  * whichever interpretation is consistent with the deepest logged interval.
  *
  * Returns { strata, runs, fi, eoh, depthMode, deepestRl } — nothing else about
@@ -1159,7 +1219,18 @@ function intervalsToTracks(intervals, gl, eoh, warnings) {
   const shallowest = Math.min.apply(null, rows.map(function (r) { return r.btm; }));
   const deepestVal = Math.max.apply(null, rows.map(function (r) { return r.top; }));
   /* Depths: the chain starts at (or just below) 0.00 and never exceeds GL. */
-  tracks.depthMode = g !== null && shallowest <= 1 && deepestVal <= g + 0.01;
+  /* The chain is DEPTHS when it is anchored at (or just below) 0.00, has no
+     negative reading (a depth never is), and is consistent with the depth
+     convention — it fits inside the ground level (shallow holes), or it matches
+     the reported EOH, or it runs DEEPER than GL (which an mPD chain never does:
+     a 32.06 m hole under a 7.65 mPD ground level reads 0.00 … 32.06). */
+  const eohProbe = toNum(eoh);
+  const noNegatives = rows.every(function (r) { return r.btm >= -0.01; });
+  const fitsBelowGl = deepestVal <= g + 0.01;
+  const matchesEoh = eohProbe !== null && eohProbe > 0 &&
+    Math.abs(deepestVal - eohProbe) <= Math.max(0.5, 0.02 * eohProbe);
+  tracks.depthMode = g !== null && shallowest <= 1 && noNegatives &&
+    (fitsBelowGl || matchesEoh || deepestVal > g + 0.01);
   if (g === null) warn.push('Compact intervals were read without a ground level — depths were left as given.');
 
   rows.forEach(function (r) {
@@ -1192,14 +1263,14 @@ function intervalsToTracks(intervals, gl, eoh, warnings) {
   if (eohNum === null) {
     tracks.eoh = round3(deepest);
     warn.push('EOH was not usable — taken from the deepest logged interval (' + tracks.eoh.toFixed(2) + ' mPD).');
-  } else if (tracks.depthMode && g !== null && eohNum >= 0 && eohNum <= g &&
+  } else if (tracks.depthMode && g !== null && eohNum >= 0 &&
              Math.abs((g - eohNum) - deepest) <= tol) {
-    tracks.eoh = round3(g - eohNum);                 // a depth matching the logged bottom
+    tracks.eoh = round3(g - eohNum);                 // a depth matching the logged bottom (any hole depth)
   } else if (Math.abs(eohNum - deepest) <= tol) {
     tracks.eoh = round3(eohNum);                     // the logged bottom expressed as an elevation
   } else if (!tracks.depthMode && g !== null && eohNum <= g) {
     tracks.eoh = round3(eohNum);                     // elevation-style payload: EOH is an elevation
-  } else if (tracks.depthMode && g !== null && eohNum >= 0 && eohNum <= g) {
+  } else if (tracks.depthMode && g !== null && eohNum >= 0) {
     tracks.eoh = round3(g - eohNum);                 // a depth, possibly deeper than the logged bands
   } else {
     tracks.eoh = round3(deepest);
@@ -2484,6 +2555,200 @@ function looksLikeNonLogDocument(rawText, json) {
   const photoish = photoKeys.some(function (k) { return o[k] !== undefined; });
   return gl === null && eoh === null && photoish;
 }
+
+/* ---- drillhole-log page PRE-FILTER (dual-condition, pure) -----------------
+   A 100+ page CEDD / Gammon Final Fieldwork Report is mostly NOT borehole logs:
+   cover sheets, contents, location plans, test schedules, standpipe and
+   piezometer details, monitoring results and core-box photographs. Rasterising
+   and shipping every page to the vision model is slow and wasteful, so before a
+   page is rendered its PDF.js TEXT LAYER is classified here. A page counts as
+   a log only when BOTH conditions hold: a recognised log heading is present AND
+   no recognised non-log heading is. */
+
+/** Headings that mark a genuine drillhole / borehole / pit log sheet. */
+const LOG_PAGE_INCLUDE = [
+  'DRILLHOLE RECORD', 'BOREHOLE RECORD', 'DRILLHOLE LOG', 'INSPECTION PIT RECORD'
+];
+
+/**
+ * Headings that mark a NON-log sheet even when it also mentions a hole — test
+ * results, standpipe / piezometer details, monitoring schedules, core-box
+ * photographs and the report's media index. Any of these WINS over an include
+ * match, so a "PERMEABILITY TEST RECORD" page is never ingested.
+ */
+const LOG_PAGE_EXCLUDE = [
+  'PERMEABILITY TEST RECORD', 'STANDPIPE DETAIL', 'PIEZOMETER DETAIL',
+  'MONITORING RESULTS', 'CORE PHOTOGRAPH', 'MEDIA INDEX'
+];
+
+/**
+ * Flattens a raw text layer into the searchable form the pre-filter needs:
+ * upper case, dashes unified, and every run of punctuation / line breaks
+ * collapsed to a single space — so a heading split across PDF.js text items or
+ * lines ("DRILLHOLE\n  RECORD") still matches. Pure.
+ */
+function normalisePageText(rawText) {
+  return String(rawText === null || rawText === undefined ? '' : rawText)
+    .toUpperCase()
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/[^A-Z0-9/.\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Joins a PDF.js getTextContent() item array into one string. Pure. */
+function pdfTextItemsToString(items) {
+  if (!Array.isArray(items)) return '';
+  return items.map(function (it) {
+    return (it && typeof it.str === 'string') ? it.str : '';
+  }).join(' ');
+}
+
+/**
+ * Decides, from a page's TEXT LAYER ALONE, whether it is a drillhole log. The
+ * test is DUAL-condition: a LOG_PAGE_INCLUDE heading must be present and no
+ * LOG_PAGE_EXCLUDE heading may be. Returns
+ *
+ *   { isLog, verdict: 'log' | 'excluded' | 'no-header', match, reason }
+ *
+ * so the caller can report exactly why a page was skipped.
+ */
+function classifyLogPageText(rawText) {
+  const text = normalisePageText(rawText);
+  const excluded = LOG_PAGE_EXCLUDE.filter(function (p) { return text.indexOf(p) !== -1; })[0] || null;
+  if (excluded) {
+    return { isLog: false, verdict: 'excluded', match: excluded, reason: 'non-log sheet: ' + excluded };
+  }
+  const included = LOG_PAGE_INCLUDE.filter(function (p) { return text.indexOf(p) !== -1; })[0] || null;
+  if (!included) {
+    return { isLog: false, verdict: 'no-header', match: null, reason: 'no drillhole-log heading' };
+  }
+  return { isLog: true, verdict: 'log', match: included, reason: 'log heading: ' + included };
+}
+
+/* ---- multi-sheet continuity (Sheet N of M) + HOLE MERGING (pure) ----------
+   A deep hole is printed across several sheets — "Sheet 1 of 4" … "Sheet 4 of
+   4" — each ending at the depth the next one resumes from. These helpers turn
+   the per-sheet extractions of ONE hole into a single borehole. */
+
+/** How many pages of one PDF the text pre-filter will scan. */
+const MAX_SCAN_PAGES = 400;
+/** How many log sheets one file may contribute before the scan stops. */
+const MAX_SHEETS_PER_FILE = 24;
+
+/** Positive whole number from "Sheet 3 of 4" / "3" / 3.0, else null. Pure. */
+function toSheetInt(v) {
+  if (typeof v === 'number') return (Number.isFinite(v) && v > 0) ? Math.round(v) : null;
+  /* The FIRST number is the sheet number — "Sheet 3 of 4" must never read as 34
+     (toNum() would strip the words and concatenate the digits). */
+  const m = /(\d+(?:\.\d+)?)/.exec(String(v === null || v === undefined ? '' : v).replace(/sheet/gi, ''));
+  if (!m) return null;
+  const n = Number(m[1]);
+  return (Number.isFinite(n) && n > 0) ? Math.round(n) : null;
+}
+
+/**
+ * Reads the printed sheet header of one extraction. Pure.
+ *   { holeId, sheetNum, sheetTotal }
+ */
+function sheetMetaFrom(json) {
+  const o = (json && typeof json === 'object' && !Array.isArray(json)) ? json : {};
+  return {
+    holeId: String(pickKey(o, ['hole_id', 'holeId', 'hole', 'name', 'id']) || '').trim().toUpperCase(),
+    sheetNum: toSheetInt(pickKey(o, ['sheet_num', 'sheetNum', 'sheet_number', 'sheet'])),
+    sheetTotal: toSheetInt(pickKey(o, ['sheet_total', 'sheetTotal', 'sheet_count', 'total_sheets', 'sheets']))
+  };
+}
+
+/**
+ * Merges the per-sheet extractions of ONE hole into a single compact payload of
+ * the shape normalizeBorehole() consumes:
+ *
+ *   { hole_id, sheet_num, sheet_total, coordinates, ground_level, eoh, intervals }
+ *
+ * Sheets are ordered by their PRINTED sheet number (Sheet 1 of 4 … 4 of 4);
+ * intervals are concatenated in that order, an exact repeat printed on a sheet
+ * boundary is dropped, and the first sheet that carries CO-ORDINATES / GROUND
+ * LEVEL wins (a deep hole prints its header on sheet 1 only). EOH is the
+ * deepest value seen. Pure — the batch path and the single-file scan share it.
+ */
+function mergeSheetExtractions(sheets) {
+  const list = (Array.isArray(sheets) ? sheets : [sheets]).filter(function (s) {
+    return s && typeof s === 'object' && !Array.isArray(s);
+  });
+  if (!list.length) return null;
+  const metas = list.map(function (s) { return sheetMetaFrom(s); });
+  const ranked = list.map(function (s, i) { return { s: s, m: metas[i], i: i }; })
+    .sort(function (a, b) {
+      const an = a.m.sheetNum === null ? Infinity : a.m.sheetNum;
+      const bn = b.m.sheetNum === null ? Infinity : b.m.sheetNum;
+      return (an - bn) || (a.i - b.i);
+    });
+
+  let easting = null, northing = null, gl = null, eoh = null;
+  const sheetNums = [];
+  ranked.forEach(function (r) {
+    const s = r.s;
+    const co = (s.coordinates && typeof s.coordinates === 'object' && !Array.isArray(s.coordinates)) ? s.coordinates : {};
+    if (easting === null) easting = toNum(pickKey(co, ['easting', 'E', 'east']));
+    if (northing === null) northing = toNum(pickKey(co, ['northing', 'N', 'north']));
+    if (easting === null) easting = toNum(pickKey(s, ['easting', 'E', 'east']));
+    if (northing === null) northing = toNum(pickKey(s, ['northing', 'N', 'north']));
+    if (gl === null) gl = toNum(pickKey(s, ['ground_level', 'groundLevel', 'gl', 'GL']));
+    const e = toNum(pickKey(s, ['eoh', 'EOH', 'termination', 'end_of_hole']));
+    if (e !== null && (eoh === null || e > eoh)) eoh = e;
+    if (r.m.sheetNum !== null) sheetNums.push(r.m.sheetNum);
+  });
+
+  const intervals = [];
+  const seen = {};
+  ranked.forEach(function (r) {
+    const arr = Array.isArray(r.s.intervals) ? r.s.intervals : [];
+    arr.forEach(function (iv) {
+      if (!iv || typeof iv !== 'object') return;
+      const f = toNum(pickKey(iv, ['from', 'top', 'depth_from', 'from_depth', 'from_m']));
+      const t = toNum(pickKey(iv, ['to', 'btm', 'bottom', 'depth_to', 'to_depth', 'to_m']));
+      if (f === null || t === null) return;
+      const key = round3(Math.min(f, t)) + ':' + round3(Math.max(f, t));
+      if (seen[key]) return;
+      seen[key] = true;
+      intervals.push(iv);
+    });
+  });
+
+  const sheetTotal = metas.map(function (m) { return m.sheetTotal; })
+    .filter(function (n) { return n !== null; })[0] || (sheetNums.length || null);
+
+  return {
+    hole_id: metas.map(function (m) { return m.holeId; }).filter(Boolean)[0] || '',
+    sheet_num: sheetNums.length ? Math.min.apply(null, sheetNums) : null,
+    sheet_total: sheetTotal,
+    coordinates: { easting: easting, northing: northing },
+    ground_level: gl,
+    eoh: eoh,
+    intervals: intervals
+  };
+}
+
+/**
+ * Groups per-sheet extractions by hole id and merges each group, keeping the
+ * order in which the holes first appear in the file. Returns one compact
+ * payload per hole. Pure.
+ */
+function groupSheetsByHole(sheets) {
+  const list = (Array.isArray(sheets) ? sheets : [sheets]).filter(function (s) {
+    return s && typeof s === 'object' && !Array.isArray(s);
+  });
+  const order = [];
+  const groups = {};
+  list.forEach(function (s) {
+    const id = sheetMetaFrom(s).holeId || '(unnamed)';
+    if (!groups[id]) { groups[id] = []; order.push(id); }
+    groups[id].push(s);
+  });
+  return order.map(function (id) { return mergeSheetExtractions(groups[id]); });
+}
+
 /* ==========================================================================
    CROSS-SECTION ALIGNMENT + AUTOMATIC ENGINEERING SUMMARY (pure, DOM-free)
    --------------------------------------------------------------------------
@@ -2714,6 +2979,138 @@ function buildSummaryCsv(holes) {
   (holes || []).forEach(function (h) { rows.push(summaryRecord(h).map(csvCell).join(',')); });
   return rows.join('\r\n') + '\r\n';
 }
+/* ---- PDF export plan (pure): sheets, page numbering, A4 geometry --------- */
+
+/**
+ * The exportable sheets, in page order. `mode` forces the chart mode a sheet is
+ * composed in (null = the captured map), so the "Strip Profile" sheet and the
+ * "Cross-Section A-A'" sheet are independent of whatever the screen shows.
+ */
+const PDF_SHEETS = [
+  { key: 'map',
+    label: 'Site Location Plan (Map View)',
+    title: 'GI Borehole Dashboard - Site Location Plan',
+    mode: null },
+  { key: 'profile',
+    label: 'Subsurface Benchmarking Profile (Strip Profile)',
+    title: 'GI Borehole Dashboard - Subsurface Benchmarking Profile',
+    mode: CHART_MODE_STRIP },
+  { key: 'section',
+    label: 'Geotechnical Cross-Section (Section A-A\u2032)',
+    title: 'GI Borehole Dashboard - Geotechnical Cross-Section (Section A-A\u0027)',
+    mode: CHART_MODE_SECTION }
+];
+
+/** Modal defaults: every sheet ticked, A4 landscape. */
+const PDF_DEFAULT_EXPORT = {
+  sheets: { map: true, profile: true, section: true },
+  orientation: 'landscape'
+};
+
+const PDF_ORIENTATIONS = ['landscape', 'portrait'];
+
+/** A4 page geometry in millimetres, per orientation. */
+const PDF_PAGE = {
+  landscape: { w: 297, h: 210, label: 'A4 landscape' },
+  portrait:  { w: 210, h: 297, label: 'A4 portrait' }
+};
+
+/** Map-capture knobs (the fixed print aspect + tile settle window). */
+const PDF_MAP_CAPTURE = {
+  longEdgePx: 1120,    // capture long edge (≈2× print scale at A4)
+  settleMs: 350,       // mandatory settle so LandsD tiles/labels are painted
+  maxWaitMs: 2500,     // bounded extra wait while tiles are still loading
+  scale: 2,            // html2canvas device scale
+  padRatio: 0.2,       // fitBounds padding around the plotted markers
+  marginMm: 10,        // PDF margin
+  footerMm: 5,         // footer band reserved under the sheet
+  minBytes: 2000       // a PNG shorter than this is treated as a failed capture
+};
+
+/** Page stamp printed on every sheet: "Sheet 2 of 3 - GI Dashboard". */
+function sheetStamp(index, total) {
+  return 'Sheet ' + index + ' of ' + total + ' - GI Dashboard';
+}
+
+/**
+ * Sanitises a stored / partial export selection: unknown keys are dropped,
+ * missing sheets fall back to the default (ticked) and a junk orientation falls
+ * back to A4 landscape. An ARRAY of sheet keys is treated as an explicit
+ * selection list (so a page plan can be fed straight back in), in which case the
+ * unlisted sheets are off rather than defaulted on.
+ */
+function exportOptionsSanitise(raw) {
+  const src = (raw && typeof raw === 'object') ? raw : {};
+  const list = Array.isArray(src.sheets) ? src.sheets : null;
+  const map = (!list && src.sheets && typeof src.sheets === 'object') ? src.sheets : null;
+  const sheets = {};
+  PDF_SHEETS.forEach(function (s) {
+    if (list) sheets[s.key] = list.indexOf(s.key) !== -1;
+    else if (map && Object.prototype.hasOwnProperty.call(map, s.key)) sheets[s.key] = !!map[s.key];
+    else sheets[s.key] = PDF_DEFAULT_EXPORT.sheets[s.key];
+  });
+  const orientation = PDF_ORIENTATIONS.indexOf(src.orientation) === -1
+    ? PDF_DEFAULT_EXPORT.orientation : src.orientation;
+  return { sheets: sheets, orientation: orientation };
+}
+
+/** True when at least one sheet is ticked. */
+function exportHasSheets(raw) {
+  const o = exportOptionsSanitise(raw);
+  return PDF_SHEETS.some(function (s) { return o.sheets[s.key]; });
+}
+
+/**
+ * The page plan for one export: the selected sheets in canonical page order,
+ * the page count and the "Sheet X of Y - GI Dashboard" stamp for each page.
+ * Throws when nothing is ticked (the UI also keeps Generate disabled).
+ */
+function pdfPagePlan(raw) {
+  const o = exportOptionsSanitise(raw);
+  const chosen = PDF_SHEETS.filter(function (s) { return o.sheets[s.key]; });
+  if (!chosen.length) throw new Error('Select at least one sheet to export.');
+  return {
+    orientation: o.orientation,
+    page: PDF_PAGE[o.orientation],
+    pages: chosen.length,
+    sheets: chosen.map(function (s) { return s.key; }),
+    stamps: chosen.map(function (s, i) { return sheetStamp(i + 1, chosen.length); })
+  };
+}
+
+/** A4 page size in mm for an orientation (jsPDF agrees: 297×210 / 210×297). */
+function pdfPageSize(orientation) {
+  return PDF_PAGE[exportOptionsSanitise({ orientation: orientation }).orientation];
+}
+
+/**
+ * Capture size for the map. The aspect of the printable box is preserved
+ * EXACTLY, so the captured image fills the A4 text box with no vertical squash
+ * and no blank band above/below it; the long edge is `longEdge` px.
+ */
+function mapCaptureSize(boxW, boxH, longEdge) {
+  const w = toNum(boxW) > 0 ? toNum(boxW) : (PDF_PAGE.landscape.w - PDF_MAP_CAPTURE.marginMm * 2);
+  const h = toNum(boxH) > 0 ? toNum(boxH) : (PDF_PAGE.landscape.h - PDF_MAP_CAPTURE.marginMm * 2);
+  const long = toNum(longEdge) > 0 ? toNum(longEdge) : PDF_MAP_CAPTURE.longEdgePx;
+  const aspect = w / h;
+  return aspect >= 1
+    ? { width: long, height: Math.round(long / aspect) }
+    : { width: Math.round(long * aspect), height: long };
+}
+
+/**
+ * The image box a sheet gets: the printable page area under the title block,
+ * minus the footer band. Used both to size the map capture and to place the
+ * image, so the aspect always matches and the sheet fills the page.
+ */
+function pdfSheetBox(pageSize, titleLines, marginMm, footerMm) {
+  const m = toNum(marginMm) > 0 ? toNum(marginMm) : PDF_MAP_CAPTURE.marginMm;
+  const lines = toNum(titleLines) >= 0 ? toNum(titleLines) : 3;
+  const foot = toNum(footerMm) > 0 ? toNum(footerMm) : PDF_MAP_CAPTURE.footerMm;
+  const y = m + 10 + lines * 4 + 2;                 // title + meta block
+  return { x: m, y: y, w: pageSize.w - m * 2, h: pageSize.h - y - m - foot };
+}
+
 /* ---- self-tests: the exact assertions the spec demands -------------------- */
 
 /**
@@ -3525,6 +3922,90 @@ function buildSelfTests(opts) {
      !looksLikeNonLogDocument('{}', { hole_id: 'SP8', ground_level: 51.58,
        intervals: [{ from: 0, to: 0.85, grade: 'FILL' }] }), 'kept');
 
+  /* --- drillhole-log page PRE-FILTER, dual condition (FR-047) -------------- */
+  eq('parse', 'a DRILLHOLE RECORD page passes the pre-filter',
+     classifyLogPageText('DRILLHOLE RECORD  Hole No. ASP/BH5  Sheet 1 of 4').isLog, true);
+  eq('parse', 'a heading split across PDF.js text items / lines still matches',
+     classifyLogPageText('drillhole\n   record').verdict, 'log');
+  eq('parse', 'the pre-filter is case-insensitive',
+     classifyLogPageText('borehole record').match, 'BOREHOLE RECORD');
+  eq('parse', 'an INSPECTION PIT RECORD page passes',
+     classifyLogPageText('INSPECTION PIT RECORD  IP1').match, 'INSPECTION PIT RECORD');
+  eq('parse', 'a report cover sheet carries no log heading -> no-header',
+     classifyLogPageText('FINAL FIELDWORK REPORT  Contract CV/2023/03').verdict, 'no-header');
+  eq('parse', 'an image-only page (no text layer) is rejected',
+     classifyLogPageText('').isLog, false);
+  eq('parse', 'a contents page is rejected',
+     classifyLogPageText('CONTENTS   1. Introduction ... 4').verdict, 'no-header');
+  eq('parse', 'PERMEABILITY TEST RECORD is excluded even with a log heading present',
+     classifyLogPageText('DRILLHOLE RECORD\nPERMEABILITY TEST RECORD').verdict, 'excluded');
+  eq('parse', 'STANDPIPE DETAIL is excluded',
+     classifyLogPageText('STANDPIPE DETAIL  ASP/BH5').match, 'STANDPIPE DETAIL');
+  eq('parse', 'PIEZOMETER DETAIL is excluded',
+     classifyLogPageText('PIEZOMETER DETAIL  ASP/BH5').verdict, 'excluded');
+  eq('parse', 'MONITORING RESULTS is excluded',
+     classifyLogPageText('MONITORING RESULTS  February 2024').match, 'MONITORING RESULTS');
+  eq('parse', 'the exclude condition always wins over the include condition',
+     classifyLogPageText('BOREHOLE RECORD + CORE PHOTOGRAPH').isLog, false);
+  eq('parse', 'MEDIA INDEX is excluded even when it repeats the hole id',
+     classifyLogPageText('MEDIA INDEX  DRILLHOLE RECORD  ASP/BH5').verdict, 'excluded');
+  eq('parse', 'the pre-filter reports a human-readable reason',
+     classifyLogPageText('DRILLHOLE RECORD').reason, 'log heading: DRILLHOLE RECORD');
+  eq('parse', 'pdfTextItemsToString joins the text layer',
+     pdfTextItemsToString([{ str: 'DRILLHOLE' }, { str: 'RECORD' }, null]), 'DRILLHOLE RECORD ');
+  eq('parse', 'pdfTextItemsToString survives a non-array',
+     pdfTextItemsToString(null), '');
+  eq('parse', 'the scan cap is declared',
+     [MAX_SCAN_PAGES, MAX_SHEETS_PER_FILE].join(','), '400,24');
+
+  /* --- multi-sheet continuity (Sheet N of M) + hole merging (FR-049) -------- */
+  eq('parse', 'a sheet number is read from "Sheet 3 of 4"', toSheetInt('Sheet 3 of 4'), 3);
+  eq('parse', 'a bare sheet number is read', toSheetInt(2), 2);
+  eq('parse', 'the FIRST number wins, never "34" from "Sheet 3 of 4"', toSheetInt('2 of 4'), 2);
+  eq('parse', 'a missing sheet number is null', toSheetInt('—'), null);
+  eq('parse', 'the sheet header of one extraction is read',
+     [sheetMetaFrom({ hole_id: 'asp/bh5', sheet_num: 2, sheet_total: 4 }).holeId,
+      sheetMetaFrom({ hole_id: 'asp/bh5', sheet_num: 2, sheet_total: 4 }).sheetNum,
+      sheetMetaFrom({ hole_id: 'asp/bh5', sheet_num: 2, sheet_total: 4 }).sheetTotal].join(','),
+     'ASP/BH5,2,4');
+  const sh1 = { hole_id: 'ASP/BH5', sheet_num: 1, sheet_total: 4,
+    coordinates: { easting: 835000, northing: 816000 }, ground_level: 12.5, eoh: 20,
+    intervals: [{ from: 0, to: 5, grade: 'FILL' }] };
+  const sh2 = { hole_id: 'ASP/BH5', sheet_num: 2, sheet_total: 4, eoh: 45,
+    intervals: [{ from: 5, to: 20, grade: 'Grade IV' }] };
+  const sh3 = { hole_id: 'ASP/BH5', sheet_num: 3, sheet_total: 4, eoh: 62.3,
+    intervals: [{ from: 20, to: 45, grade: 'Grade III' }] };
+  const sh4 = { hole_id: 'ASP/BH5', sheet_num: 4, sheet_total: 4, eoh: 62.3,
+    intervals: [{ from: 45, to: 62.3, grade: 'Grade II' }] };
+  const merged = mergeSheetExtractions([sh3, sh1, sh4, sh2]);
+  eq('parse', 'sheets are re-ordered by their PRINTED sheet number', merged.sheet_num, 1);
+  eq('parse', 'the sheet total is carried through', merged.sheet_total, 4);
+  eq('parse', 'the header of sheet 1 supplies the coordinates',
+     [merged.coordinates.easting, merged.coordinates.northing].join(','), '835000,816000');
+  eq('parse', 'the ground level comes from the sheet that prints it', merged.ground_level, 12.5);
+  eq('parse', 'EOH is the deepest value across the sheets', merged.eoh, 62.3);
+  eq('parse', 'the intervals of every sheet are concatenated in sheet order',
+     merged.intervals.map(function (iv) { return iv.from + '-' + iv.to; }).join(','),
+     '0-5,5-20,20-45,45-62.3');
+  eq('parse', 'an interval repeated on a sheet boundary is kept once',
+     mergeSheetExtractions([{ hole_id: 'H', intervals: [{ from: 0, to: 5, grade: 'FILL' }] },
+       { hole_id: 'H', intervals: [{ from: 0, to: 5, grade: 'FILL' },
+         { from: 5, to: 9, grade: 'Grade II' }] }]).intervals.length, 2);
+  eq('parse', 'a deep multi-sheet hole normalises into ONE borehole',
+     normalizeBorehole(merged).hole.strata.length, 4);
+  eq('parse', 'the merged hole keeps the deepest EOH (62.3 m depth, GL 12.5)',
+     normalizeBorehole(merged).hole.eoh, round2(12.5 - 62.3));
+  const grouped = groupSheetsByHole([sh1, sh2, sh3, sh4,
+    { hole_id: 'ASP/TP1', sheet_num: 1, sheet_total: 1,
+      intervals: [{ from: 0, to: 3, grade: 'FILL' }] }]);
+  eq('parse', 'groupSheetsByHole merges each hole, in first-seen order',
+     grouped.map(function (g) { return g.hole_id; }).join(','), 'ASP/BH5,ASP/TP1');
+  eq('parse', 'one payload comes out per hole', grouped.length, 2);
+  eq('parse', 'the merged group holds every sheet interval', grouped[0].intervals.length, 4);
+  eq('parse', 'a single sheet is passed through unchanged',
+     groupSheetsByHole([sh1]).length, 1);
+  eq('parse', 'non-object sheets are ignored', groupSheetsByHole([null, 'x', sh1]).length, 1);
+
   /* --- compact extraction contract (FR-036) ------------------------------- */
   const compactRaw = {
     hole_id: 'sp8',
@@ -3658,6 +4139,86 @@ function buildSelfTests(opts) {
   }
   eq('memory', 'the store is capped', addCorrection(manyCorr, rec).length, MAX_AI_CORRECTIONS);
 
+  /* --- PDF export plan: sheet selection, page numbering, A4 geometry ------ */
+  eq('pdf', 'three exportable sheets, in page order',
+     PDF_SHEETS.map(function (s) { return s.key; }).join(','), 'map,profile,section');
+  eq('pdf', 'the modal labels match the agreed wording',
+     PDF_SHEETS.map(function (s) { return s.label; }).join(' | '),
+     'Site Location Plan (Map View) | Subsurface Benchmarking Profile (Strip Profile) | ' +
+     'Geotechnical Cross-Section (Section A-A\u2032)');
+  eq('pdf', 'the profile sheet always composes in strip mode', PDF_SHEETS[1].mode, CHART_MODE_STRIP);
+  eq('pdf', 'the section sheet always composes in cross-section mode', PDF_SHEETS[2].mode, CHART_MODE_SECTION);
+  eq('pdf', 'the map sheet has no chart mode', String(PDF_SHEETS[0].mode), 'null');
+  const defExp = exportOptionsSanitise(null);
+  eq('pdf', 'all three sheets are ticked by default',
+     [defExp.sheets.map, defExp.sheets.profile, defExp.sheets.section].join(','), 'true,true,true');
+  eq('pdf', 'landscape A4 is the default orientation', defExp.orientation, 'landscape');
+  eq('pdf', 'a junk orientation falls back to landscape', exportOptionsSanitise({ orientation: 'A3 sideways' }).orientation, 'landscape');
+  eq('pdf', 'a valid orientation survives', exportOptionsSanitise({ orientation: 'portrait' }).orientation, 'portrait');
+  eq('pdf', 'an unticked sheet survives a round-trip',
+     String(exportOptionsSanitise({ sheets: { map: false } }).sheets.map), 'false');
+  /* A page plan carries `sheets` as an ARRAY of keys — feeding it back in must
+     keep the selection, not silently fall back to "all three". */
+  eq('pdf', 'an explicit key list is honoured',
+     [exportOptionsSanitise({ sheets: ['profile'] }).sheets.map,
+      exportOptionsSanitise({ sheets: ['profile'] }).sheets.profile,
+      exportOptionsSanitise({ sheets: ['profile'] }).sheets.section].join(','), 'false,true,false');
+  eq('pdf', 'a key list selects only what it names', String(pdfPagePlan({ sheets: ['profile'] }).pages), '1');
+  eq('pdf', 'a two-key list selects exactly two sheets',
+     pdfPagePlan({ sheets: ['map', 'section'] }).sheets.join(','), 'map,section');
+  eq('pdf', 'an empty key list selects nothing (and is refused)',
+     (function () { try { pdfPagePlan({ sheets: [] }); return 'no throw'; } catch (e) { return 'threw'; } })(), 'threw');
+  eq('pdf', 'a key list keeps the canonical page order',
+     pdfPagePlan({ sheets: ['section', 'map'] }).sheets.join(','), 'map,section');
+  eq('pdf', 'feeding a plan straight back in is idempotent',
+     pdfPagePlan(pdfPagePlan({ sheets: ['profile'] })).sheets.join(','), 'profile');
+  eq('pdf', 'a full plan round-trips as three pages',
+     String(pdfPagePlan(pdfPagePlan(null)).pages), '3');
+  eq('pdf', 'the orientation survives the round-trip',
+     pdfPagePlan(pdfPagePlan({ orientation: 'portrait' })).orientation, 'portrait');
+  eq('pdf', 'the stamp reads "Sheet X of Y - GI Dashboard"', sheetStamp(2, 3), 'Sheet 2 of 3 - GI Dashboard');
+  const plan3 = pdfPagePlan(null);
+  eq('pdf', 'three sheets -> three pages', String(plan3.pages), '3');
+  eq('pdf', 'every page is stamped X of 3', plan3.stamps.join(' | '),
+     'Sheet 1 of 3 - GI Dashboard | Sheet 2 of 3 - GI Dashboard | Sheet 3 of 3 - GI Dashboard');
+  eq('pdf', 'the page order is map -> profile -> section', plan3.sheets.join(','), 'map,profile,section');
+  const plan1 = pdfPagePlan({ sheets: { map: false, profile: true, section: false } });
+  eq('pdf', 'one sheet -> exactly one page', String(plan1.pages), '1');
+  eq('pdf', 'the single page is stamped 1 of 1', plan1.stamps[0], 'Sheet 1 of 1 - GI Dashboard');
+  eq('pdf', 'the last sheet alone is still page 1 of 1',
+     pdfPagePlan({ sheets: { map: false, profile: false, section: true } }).stamps[0], 'Sheet 1 of 1 - GI Dashboard');
+  eq('pdf', 'two sheets are numbered 1..2',
+     pdfPagePlan({ sheets: { map: true, profile: false, section: true } }).stamps.join(' | '),
+     'Sheet 1 of 2 - GI Dashboard | Sheet 2 of 2 - GI Dashboard');
+  ok('pdf', 'an empty selection is refused', (function () {
+    try { pdfPagePlan({ sheets: { map: false, profile: false, section: false } }); return false; }
+    catch (e) { return /at least one sheet/.test(e.message); }
+  })(), 'threw');
+  eq('pdf', 'exportHasSheets reflects the ticks',
+     exportHasSheets(null) + ',' + exportHasSheets({ sheets: { map: false, profile: false, section: false } }), 'true,false');
+  eq('pdf', 'A4 landscape is 297 x 210 mm', pdfPageSize('landscape').w + 'x' + pdfPageSize('landscape').h, '297x210');
+  eq('pdf', 'A4 portrait is 210 x 297 mm', pdfPageSize('portrait').w + 'x' + pdfPageSize('portrait').h, '210x297');
+  eq('pdf', 'the page label is human readable', pdfPageSize('portrait').label, 'A4 portrait');
+  /* The map is captured at the printable box aspect, so it fills the page. */
+  const lsBox = pdfSheetBox(PDF_PAGE.landscape, 3);
+  const landscapeCap = mapCaptureSize(lsBox.w, lsBox.h);
+  eq('pdf', 'the landscape text box is 277 mm wide', lsBox.w, 277);
+  eq('pdf', 'the capture keeps the printable aspect exactly',
+     (landscapeCap.width / landscapeCap.height).toFixed(3), (lsBox.w / lsBox.h).toFixed(3));
+  eq('pdf', 'the capture long edge is 1120 px', String(landscapeCap.width), '1120');
+  ok('pdf', 'the capture is a wide bar, never a squashed strip',
+     landscapeCap.height >= 600 && landscapeCap.height <= 720, landscapeCap.width + 'x' + landscapeCap.height);
+  const portraitBox = pdfSheetBox(PDF_PAGE.portrait, 3);
+  const portraitCap = mapCaptureSize(portraitBox.w, portraitBox.h);
+  ok('pdf', 'a portrait page gives a portrait capture',
+     portraitCap.height > portraitCap.width && portraitCap.height === 1120, portraitCap.width + 'x' + portraitCap.height);
+  eq('pdf', 'an explicit long edge is honoured', String(mapCaptureSize(277, 168, 900).width), '900');
+  eq('pdf', 'a broken box falls back to the landscape box', mapCaptureSize(0, 0).width,
+     mapCaptureSize(PDF_PAGE.landscape.w - 20, PDF_PAGE.landscape.h - 20).width);
+  eq('pdf', 'the portrait sheet box is 190 mm wide', portraitBox.w, 190);
+  eq('pdf', 'the capture knobs are the ones the export documents',
+     PDF_MAP_CAPTURE.settleMs + '/' + PDF_MAP_CAPTURE.padRatio + '/' + PDF_MAP_CAPTURE.scale, '350/0.2/2');
+
   return out;
 }
 /* PURE-CORE-END */
@@ -3674,7 +4235,8 @@ const LS = {
   MODEL: 'openrouter_vision_model',        // current key (the legacy one is migrated away)
   LEGACY_MODEL: 'gi.openrouter.model',
   SECTION: 'gi.section.v1',                // the A-A' alignment: hole IDs in click order
-  CHART_MODE: 'gi.chartMode.v1'            // 'strip' | 'section'
+  CHART_MODE: 'gi.chartMode.v1',           // 'strip' | 'section'
+  EXPORT: 'gi.export.v1'                   // Export-PDF options: sheets ticked + orientation
 };
 
 /**
@@ -5511,11 +6073,16 @@ function wireSettings() {
   $('btn-reset-seed').addEventListener('click', resetToSeed);
   const memoryBtn = $('btn-clear-memory');
   if (memoryBtn) memoryBtn.addEventListener('click', clearAiCorrections);
+  /* Export PDF Options modal: live preview + Generate. */
+  const genBtn = $('btn-export-generate');
+  if (genBtn) genBtn.addEventListener('click', generatePdfFromModal);
+  document.querySelectorAll('#modal-export input[data-sheet], #modal-export input[name="exp-orient"]')
+    .forEach(function (el) { el.addEventListener('change', updateExportModalSummary); });
   const demo = $('btn-load-demo');
   if (demo) demo.addEventListener('click', resetToSeed);
   $('btn-new-page').addEventListener('click', newPage);
   $('btn-share').addEventListener('click', openShareModal);
-  $('btn-export-pdf').addEventListener('click', exportReportPdf);
+  $('btn-export-pdf').addEventListener('click', openExportModal);
   $('btn-export-summary').addEventListener('click', exportSummaryCsv);
   const shareBox = $('share-include-data');
   if (shareBox) shareBox.addEventListener('change', refreshShareUrl);
@@ -5548,6 +6115,8 @@ const SYSTEM_PROMPT = [
   '',
   'Output shape (nothing else — no extra keys, no nested wrappers):',
   '{ "hole_id": "SP8",',
+  '  "sheet_num": 1,',
+  '  "sheet_total": 4,',
   '  "coordinates": { "easting": 842732.79, "northing": 817653.02 },',
   '  "ground_level": 51.58,',
   '  "eoh": 13.67,',
@@ -5579,12 +6148,23 @@ const SYSTEM_PROMPT = [
   '9. Round every number to 2 decimal places. Do not output negative depths, and do not output a "from" that is',
   '   greater than its "to".',
   '10. If the page is NOT a borehole log (core-box photographs, a location plan, a cover sheet), return',
-  '    { "hole_id": <reference if visible>, "non_log": true } and nothing else.'
+  '    { "hole_id": <reference if visible>, "non_log": true } and nothing else.',
+  '11. "sheet_num" / "sheet_total" are the printed sheet counters of a multi-sheet hole — for a page headed',
+  '    "Sheet 2 of 4" output 2 and 4. Read them from the SHEET HEADER, never from the PDF page number. Use 1 and',
+  '    1 for a single-sheet log, and null for both when the header prints no sheet counter.',
+  '12. A deep hole is printed over several sheets. Every sheet repeats the same "hole_id", and each sheet logs',
+  '    only the depths it covers, so on sheets 2, 3, 4 the first "from" is NOT 0.00 (sheet 1 may cover',
+  '    0.00-15.00 and sheet 2 15.00-30.00). Extract exactly what THIS sheet shows — never renumber depths from',
+  '    zero and never repeat an interval logged on another sheet. Copy "coordinates" and "ground_level" whenever',
+  '    this sheet prints them, and use null for anything its header leaves blank.'
 ].join('\n');
 
 const USER_PROMPT = [
   'Extract this borehole log into the compact JSON shape specified by the system instructions.',
-  'Return the JSON object only: hole_id, coordinates, ground_level, eoh and one intervals entry per depth band.',
+  'Return the JSON object only: hole_id, sheet_num, sheet_total, coordinates, ground_level, eoh and one',
+  'intervals entry per depth band.',
+  'If this sheet is one of several for the same hole, still extract ONLY the depths logged on THIS sheet,',
+  'together with its printed sheet counter.',
   'Exclude all description text — only the numeric/grade interval data is wanted.'
 ].join('\n');
 
@@ -5603,6 +6183,8 @@ const EXTRACTION_SCHEMA_REFERENCE = {
   type: 'OBJECT',
   properties: {
     hole_id: { type: 'STRING' },
+    sheet_num: { type: 'NUMBER', nullable: true },
+    sheet_total: { type: 'NUMBER', nullable: true },
     coordinates: { type: 'OBJECT', properties: {
       easting: { type: 'NUMBER', nullable: true }, northing: { type: 'NUMBER', nullable: true }
     }, required: ['easting', 'northing'] },
@@ -5659,16 +6241,36 @@ async function drawPdfPage(page, scale, mime) {
 }
 
 /**
- * Renders a page, then shrinks it until the base64 payload fits `MAX_IMAGE_BYTES`:
- * JPEG quality steps down first, then the scale, to a floor of ~55 % of the
- * capped scale. Returns the render metrics so the UI can report them.
+ * Opens a PDF file with PDF.js, ensuring the worker first. Shared by the text
+ * pre-filter and the renderer so a scanned document is parsed only ONCE.
  */
-async function renderPdfPage(file, pageNo, scale, mime, budget) {
+async function openPdfDocument(file) {
   await ensurePdfWorker();
   const buf = await file.arrayBuffer();
-  const doc = await pdfjsLib.getDocument({ data: buf, useSystemFonts: true }).promise;
-  const n = doc.numPages;
-  const page = await doc.getPage(Math.min(Math.max(1, pageNo), n));
+  return pdfjsLib.getDocument({ data: buf, useSystemFonts: true }).promise;
+}
+
+/**
+ * The raw text layer of an already-open page, for the dual-condition pre-filter
+ * (FR-047). An image-only / scanned page has no text layer, so an empty string
+ * comes back and the page is rejected as "no drillhole-log heading".
+ */
+async function readPdfPageText(page) {
+  try {
+    const content = await page.getTextContent();
+    return pdfTextItemsToString(content && content.items);
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * Rasterises an ALREADY-OPEN page, then shrinks it until the base64 payload fits
+ * `MAX_IMAGE_BYTES`: JPEG quality steps down first, then the scale, to a floor
+ * of ~55 % of the capped scale. Returns the render metrics so the UI can report
+ * them.
+ */
+async function renderPdfPageObject(page, scale, mime, budget) {
   const oneToOne = page.getViewport({ scale: 1 });
   const cappedScale = clampRenderScale(oneToOne.width, oneToOne.height, scale);
   const limit = budget === undefined ? MAX_IMAGE_BYTES : budget;
@@ -5689,7 +6291,6 @@ async function renderPdfPage(file, pageNo, scale, mime, budget) {
     out = await drawPdfPage(page, current, mime);
     out.quality = quality;
   }
-  out.pages = n;
   out.cappedScale = cappedScale;
   out.requestedScale = Number(scale) || 1.5;
   out.bytes = String(out.dataUrl).length;
@@ -5699,6 +6300,16 @@ async function renderPdfPage(file, pageNo, scale, mime, budget) {
     throw new Error('The rendered page is ' + (out.bytes / 1048576).toFixed(1) +
       ' MB of base64, which is too large to send. Choose a lower render scale or the JPEG format.');
   }
+  return out;
+}
+
+/** Convenience wrapper: open the file, render one page, report the page count. */
+async function renderPdfPage(file, pageNo, scale, mime, budget) {
+  const doc = await openPdfDocument(file);
+  const n = doc.numPages;
+  const page = await doc.getPage(Math.min(Math.max(1, pageNo), n));
+  const out = await renderPdfPageObject(page, scale, mime, budget);
+  out.pages = n;
   return out;
 }
 
@@ -6282,68 +6893,187 @@ function acceptPending() {
   showBanner('Added ' + count + ' borehole' + (count === 1 ? '' : 's') + ': ' + added);
 }
 
-/**
- * Renders the selected page of a PDF and asks the vision model to read it.
- * Purely functional: no dataset side effects, so the reviewed single-file flow
- * and the batch queue share exactly the same extraction code.
- * Returns { file, page, json, hole, warnings, error, model, finish, rawText }.
- * `hole` is null when the payload could not be normalised (the caller then shows
- * the raw JSON so the user can repair it by hand).
- */
-async function extractHoleFromPdf(file, onStatus) {
-  const o = parseOptions();
-  if (onStatus) onStatus('Rendering page ' + o.page + ' at ' + o.scale + '× (long edge ≤ ' + MAX_RENDER_PX + ' px)…');
-  const img = await renderPdfPage(file, o.page, o.scale, o.mime);
-  if (!img.dataUrl || img.dataUrl.indexOf('data:') !== 0) throw new Error('The PDF page produced an empty image.');
-  const kb = Math.round((img.bytes || String(img.dataUrl).length) / 1024);
-  if (onStatus) {
-    onStatus('Rendered ' + img.width + '×' + img.height + ' px · ' +
-      (o.mime === 'image/png' ? 'PNG' : 'JPEG ' + (img.quality || JPEG_QUALITY)) + ' · ' + kb + ' KB' +
-      (img.shrank ? ' (auto-shrunk to fit the 500 KB budget)' : '') + ' — sending to OpenRouter…');
-  }
+/** Releases a PDF.js page's resources as soon as we are done with it. */
+function releasePdfPage(page) {
+  try { if (page && typeof page.cleanup === 'function') page.cleanup(); } catch (e) { /* ignore */ }
+}
 
-  /* Vision call with automatic retries: a provider hiccup ("Provider returned
-     error"), a 429, a 5xx or a network glitch is retried up to
-     MAX_REQUEST_RETRIES times with a RETRY_DELAY_MS pause before the file is
-     considered failed. The page is rendered only once, so retries are cheap. */
-  let out = null;
+/**
+ * One vision call with the automatic retry policy: a provider hiccup ("Provider
+ * returned error"), a 429, a 5xx or a network glitch is retried up to
+ * MAX_REQUEST_RETRIES times with a RETRY_DELAY_MS pause before the page is
+ * abandoned. The page is rendered only once, so retries are cheap.
+ */
+async function callVisionWithRetries(dataUrl, onStatus, pageNo) {
   let attempt = 0;
-  while (out === null) {
+  for (;;) {
     try {
-      out = await callOpenRouterWithFallback(img.dataUrl, onStatus || function () {});
+      return await callOpenRouterWithFallback(dataUrl, onStatus);
     } catch (e) {
       if (!isTransientApiError(e) || attempt >= MAX_REQUEST_RETRIES) throw e;
       attempt++;
-      if (onStatus) {
-        onStatus('Provider hiccup (' + shortApiError(e) + ') — retry ' + attempt + ' of ' +
-          MAX_REQUEST_RETRIES + ' in ' + (RETRY_DELAY_MS / 1000) + ' s…');
-      }
+      onStatus('Page ' + pageNo + ': provider hiccup (' + shortApiError(e) + ') — retry ' + attempt +
+        ' of ' + MAX_REQUEST_RETRIES + ' in ' + (RETRY_DELAY_MS / 1000) + ' s…');
       await sleep(RETRY_DELAY_MS);
-      if (onStatus) onStatus('Retrying attempt ' + (attempt + 1) + ' of ' + (MAX_REQUEST_RETRIES + 1) +
+      onStatus('Retrying attempt ' + (attempt + 1) + ' of ' + (MAX_REQUEST_RETRIES + 1) +
         ' — asking OpenRouter again…');
     }
   }
-  /* Strip the markdown fence the model sometimes wraps the JSON in, then parse. */
-  const json = extractJson(stripFences(out.text));
-  const nonLog = looksLikeNonLogDocument(out.text, json);
-  let hole = null, warnings = [], error = null;
-  try {
-    const norm = normalizeBorehole(json);
-    hole = norm.hole;
-    warnings = norm.warnings;
-  } catch (e) {
-    error = e;
-    warnings = ['Could not normalise the extracted object: ' + e.message];
+}
+
+/**
+ * Ingests a whole PDF: SCANS it page by page and reads every drillhole log it holds.
+ *
+ *   1. PDF.js reads each page's TEXT LAYER and the dual-condition pre-filter
+ *      (`classifyLogPageText`) classifies it. A page with no log heading, or
+ *      with a known non-log heading (permeability test record, standpipe /
+ *      piezometer detail, monitoring results, core photograph, media index), is
+ *      reported as "Skipped (Non-log page)" and its memory released WITHOUT a
+ *      render or a vision request — the bulk of a 100+ page report;
+ *   2. only the pages that pass are rasterised and sent to the vision model;
+ *   3. the per-sheet results are grouped by hole id and merged on the printed
+ *      sheet number (`groupSheetsByHole` → `mergeSheetExtractions`), so
+ *      "Sheet 1 of 4" … "Sheet 4 of 4" of ASP/BH5 come back as ONE borehole.
+ *
+ * Purely functional: no dataset side effects, so the reviewed single-file flow
+ * and the batch queue share exactly the same extraction code.
+ *
+ * Returns { file, page, holes, hole, json, sheets, mergedHoles, skippedPages,
+ *           scanned, warnings, error, nonLog, model, finish, rawText, image,
+ *           imageKB, httpStatus, usage }. `hole` is null when nothing could be
+ * normalised (the caller then shows the raw JSON so the user can repair it).
+ */
+async function extractHoleFromPdf(file, onStatus) {
+  const status = onStatus || function () {};
+  const o = parseOptions();
+  const doc = await openPdfDocument(file);
+  const total = doc.numPages;
+  const start = Math.min(Math.max(1, o.page), total);
+  const endPage = Math.min(total, start + MAX_SCAN_PAGES - 1);
+  status('Scanning ' + (endPage - start + 1) + ' of ' + total + ' page(s) from page ' + start +
+    ' · page cap ' + MAX_SCAN_PAGES + ' · render ' + o.scale + '× (long edge ≤ ' + MAX_RENDER_PX + ' px)…');
+
+  const sheets = [];         // the log extractions, in page order
+  const pageResults = [];    // every page the model actually saw
+  const skippedPages = [];   // pages rejected by the pre-filter (or by the model)
+  let firstLogPage = null;
+
+  for (let p = start; p <= endPage; p++) {
+    const page = await doc.getPage(p);
+    const verdict = classifyLogPageText(await readPdfPageText(page));
+    if (!verdict.isLog) {
+      releasePdfPage(page);
+      skippedPages.push({ page: p, verdict: verdict.verdict, match: verdict.match, reason: verdict.reason });
+      status('Page ' + p + '/' + total + ' — Skipped (Non-log page): ' + verdict.reason + '…');
+      continue;
+    }
+    if (firstLogPage === null) firstLogPage = p;
+    status('Page ' + p + '/' + total + ' — ' + verdict.reason + ' · rendering…');
+
+    const img = await renderPdfPageObject(page, o.scale, o.mime);
+    releasePdfPage(page);
+    if (!img.dataUrl || img.dataUrl.indexOf('data:') !== 0) throw new Error('The PDF page produced an empty image.');
+    const kb = Math.round((img.bytes || String(img.dataUrl).length) / 1024);
+    status('Page ' + p + ' (' + verdict.match + ') rendered ' + img.width + '×' + img.height + ' px · ' +
+      (o.mime === 'image/png' ? 'PNG' : 'JPEG ' + (img.quality || JPEG_QUALITY)) + ' · ' + kb + ' KB' +
+      (img.shrank ? ' (auto-shrunk to fit the 500 KB budget)' : '') + ' — sending to OpenRouter…');
+
+    const out = await callVisionWithRetries(img.dataUrl, status, p);
+    /* Strip the markdown fence the model sometimes wraps the JSON in, then parse. */
+    const json = extractJson(stripFences(out.text));
+    const nonLog = looksLikeNonLogDocument(out.text, json);
+    pageResults.push({ page: p, json: json, nonLog: nonLog, model: out.model, finish: out.finish,
+                       rawText: out.text, image: img, imageKB: kb, httpStatus: out.httpStatus,
+                       usage: out.usage || null });
+    if (nonLog) {
+      /* the vision model overruled the text filter — a core photo after all */
+      skippedPages.push({ page: p, verdict: 'excluded', match: null, reason: 'the model read a non-log sheet' });
+      status('Page ' + p + ' — the model read a non-log sheet; it joins no hole.');
+      continue;
+    }
+    sheets.push(json);
+    if (sheets.length >= MAX_SHEETS_PER_FILE) {
+      status('Reached the ' + MAX_SHEETS_PER_FILE + '-sheet cap for this file — stopping the scan.');
+      break;
+    }
   }
-  return { file: file, page: o.page, json: json, hole: hole, warnings: warnings, error: error,
-           nonLog: nonLog, model: out.model, finish: out.finish, rawText: out.text,
-           image: img, imageKB: kb, httpStatus: out.httpStatus, usage: out.usage || null };
+
+  const mergedList = groupSheetsByHole(sheets).filter(Boolean);
+  const holes = [];
+  const warnings = [];
+  let error = null;
+  mergedList.forEach(function (payload) {
+    try {
+      const norm = normalizeBorehole(payload);
+      holes.push(norm.hole);
+      norm.warnings.forEach(function (w) { warnings.push(norm.hole.name + ': ' + w); });
+    } catch (e) {
+      if (!error) error = e;
+      warnings.push(String(payload.hole_id || 'A hole') + ' could not be normalised: ' + e.message);
+    }
+  });
+
+  const lastSeen = pageResults[pageResults.length - 1] || null;
+  status('Scan complete — ' + (endPage - start + 1) + ' page(s) checked, ' + sheets.length +
+    ' log sheet(s) read, ' + skippedPages.length + ' non-log page(s) skipped, ' + mergedList.length +
+    ' hole(s) assembled' + (sheets.length > mergedList.length ? ' (sheets merged by hole)' : '') + '.');
+  const composite = pageResults.map(function (r) {
+    return '--- page ' + r.page + (r.nonLog ? ' (non-log sheet)' : '') + ' ---\n' + String(r.rawText || '');
+  }).join('\n\n');
+
+  return {
+    file: file,
+    page: firstLogPage === null ? start : firstLogPage,
+    holes: holes,
+    hole: holes[0] || null,
+    json: mergedList.length === 1 ? mergedList[0] : (mergedList.length ? mergedList : null),
+    sheets: sheets.length,
+    mergedHoles: mergedList.length,
+    skippedPages: skippedPages,
+    scanned: { pages: total, from: start, to: endPage },
+    warnings: warnings,
+    error: error,
+    nonLog: sheets.length === 0,
+    model: lastSeen ? lastSeen.model : null,
+    finish: lastSeen ? lastSeen.finish : null,
+    rawText: composite,
+    image: lastSeen ? lastSeen.image : null,
+    imageKB: lastSeen ? lastSeen.imageKB : 0,
+    httpStatus: lastSeen ? lastSeen.httpStatus : null,
+    usage: lastSeen ? lastSeen.usage : null
+  };
 }
 
 /** JSON for the raw-details pane, never throwing on circular / huge values. */
 function safeStringify(v) {
   try { return JSON.stringify(v, null, 1).slice(0, 4000); }
   catch (e) { return String(v).slice(0, 4000); }
+}
+
+/** A compact "pages scanned / sheets read / holes merged" line for the queue. */
+function scanReport(res) {
+  const bits = ['Scanned ' + (res.scanned.to - res.scanned.from + 1) + ' of ' + res.scanned.pages +
+    ' page(s) · ' + res.sheets + ' log sheet(s) → ' + res.mergedHoles + ' hole(s)' +
+    (res.sheets > res.mergedHoles ? ' (sheets merged by hole)' : '')];
+  if (res.image) {
+    bits.push('last render ' + res.image.width + '×' + res.image.height + ' px · ' + res.imageKB +
+      ' KB base64' + (res.image.shrank ? ' (auto-shrunk)' : ''));
+  }
+  if (res.skippedPages.length) {
+    const shown = res.skippedPages.slice(0, 8).map(function (s) { return 'p' + s.page + ' (' + s.reason + ')'; });
+    bits.push('skipped ' + res.skippedPages.length + ': ' + shown.join(', ') +
+      (res.skippedPages.length > shown.length ? ', …' : ''));
+  }
+  return bits.join('\n');
+}
+
+/** The skipped-page breakdown, or a note that every page passed the pre-filter. */
+function skippedPageDetail(res) {
+  if (!res.skippedPages.length) return 'Every page of this PDF passed the drillhole-log pre-filter.';
+  const shown = res.skippedPages.slice(0, 12).map(function (s) { return 'p' + s.page + ' — ' + s.reason; });
+  const more = res.skippedPages.length - shown.length;
+  return 'Pages skipped (' + res.skippedPages.length + '):\n- ' + shown.join('\n- ') +
+    (more > 0 ? '\n- …and ' + more + ' more' : '');
 }
 
 /**
@@ -6364,50 +7094,62 @@ async function processQueueItem(item) {
       renderQueue();
     });
     item.progress = 80;
-    item.message = 'Reading JSON from ' + res.model + '…';
+    item.message = 'Reading JSON from ' + (res.model || 'the model') + '…';
     renderQueue();
 
-    /* A non-log sheet (e.g. the SP10 core-box photographs) is SKIPPED, not
-       failed: it must not abort the rest of the batch. */
-    if (res.nonLog && !res.hole) {
+    /* Every page was a non-log sheet (or carried no log heading at all): SKIP,
+       not fail — it must not abort the rest of the batch. */
+    if (!res.holes.length && res.nonLog) {
       item.status = 'skipped';
       item.progress = 100;
-      item.message = 'Skipped: Core Photo / Non-log file';
-      item.detail = 'Skipped: Core Photo / Non-log file\n\nNo borehole intervals and no ground level were ' +
-        'returned, and the response reads like a photograph / core-box sheet.\n\nModel: ' + res.model +
-        '\nPage ' + res.page + ' · ' + res.imageKB + ' KB\n\nRaw model response:\n' +
-        String(res.rawText || '').slice(0, 2000);
+      item.message = 'Skipped (Non-log page)';
+      item.detail = 'Skipped (Non-log page)\n\nNo page of this PDF carried a drillhole-log heading ' +
+        '(DRILLHOLE RECORD / BOREHOLE RECORD / DRILLHOLE LOG / INSPECTION PIT RECORD), or every page that ' +
+        'did also carried a non-log heading (permeability test record, standpipe / piezometer detail, ' +
+        'monitoring results, core photograph, media index).\n\n' + skippedPageDetail(res) +
+        '\n\nRaw model response:\n' + String(res.rawText || '').slice(0, 2000);
       return 'skipped';
     }
-    if (!res.hole) {
+    if (!res.holes.length) {
       const err = res.error || new Error('The extracted object was not usable.');
       err.rawText = res.rawText;
       throw err;
     }
-    const hole = res.hole;
-    const clash = state.data.filter(function (h) { return h.name === hole.name; })[0];
-    if (clash) {
-      throw new Error('A borehole called ' + hole.name + ' is already in the dataset — ' +
-        'remove that hole or fix the hole ID on the log.');
+
+    /* Merge-safe import: every hole the file produced is added, unless its name
+       is already in the dataset (a re-upload then reports the clash instead of
+       duplicating the hole). */
+    const added = [], clashed = [];
+    res.holes.forEach(function (hole) {
+      if (state.data.some(function (h) { return h.name === hole.name; })) { clashed.push(hole.name); return; }
+      state.data.push(hole);
+      state.selected.add(hole.name);
+      added.push(hole);
+    });
+    if (!added.length) {
+      throw new Error('Every hole on this PDF is already in the dataset (' + clashed.join(', ') +
+        ') — remove them or fix the hole ID on the log.');
     }
-    const noCoords = !gridCoords(hole);
-    state.data.push(hole);
-    state.selected.add(hole.name);
-    item.hole = hole.name;
+    const names = added.map(function (h) { return h.name; }).join(', ');
+    const intervals = added.reduce(function (n, h) {
+      return n + (h.strata || []).length + (h.runs || []).length + (h.fi || []).length; }, 0);
+    const missing = added.filter(function (h) { return !gridCoords(h); }).length;
+    item.hole = names;
     item.status = 'completed';
     item.progress = 100;
-    item.message = 'Added ' + hole.name + ' · GL ' + fmt(hole.gl) + ' → EOH ' + fmt(hole.eoh) +
-      ' · ' + ((hole.strata || []).length + (hole.runs || []).length + (hole.fi || []).length) + ' intervals' +
-      (noCoords ? ' · ⚠ missing coordinates (typed in via the pencil)' : '') +
+    item.message = 'Added ' + added.length + ' hole' + (added.length === 1 ? '' : 's') + ' (' + names + ')' +
+      (res.sheets > added.length ? ' from ' + res.sheets + ' sheets' : '') + ' · ' + intervals + ' intervals' +
+      (res.skippedPages.length ? ' · ' + res.skippedPages.length + ' non-log page(s) skipped' : '') +
+      (missing ? ' · ⚠ ' + missing + ' without coordinates' : '') +
       (res.warnings.length ? ' · ' + res.warnings.length + ' note(s)' : '');
-    item.detail = 'Model: ' + res.model + ' · HTTP ' + (res.httpStatus || 200) +
+    item.detail = 'Model: ' + (res.model || '?') + ' · HTTP ' + (res.httpStatus || 200) +
       ' · finish_reason ' + (res.finish || 'stop') +
       (res.usage ? ' · tokens ' + (res.usage.completion_tokens !== undefined ? res.usage.completion_tokens : '?') +
         ' completion / ' + (res.usage.prompt_tokens !== undefined ? res.usage.prompt_tokens : '?') + ' prompt' : '') +
-      '\nPage ' + res.page + ' · ' + res.image.width + '×' + res.image.height + ' px · ' +
-      res.imageKB + ' KB base64' + (res.image.shrank ? ' (auto-shrunk)' : '') +
-      (noCoords ? '\n\n⚠ No easting/northing on the log — the hole renders in the chart; type the ' +
-        'HK1980 coordinates in the inspector to place it on the map.' : '') +
+      '\n' + scanReport(res) +
+      (clashed.length ? '\n\n⚠ Already in the dataset, so not re-added: ' + clashed.join(', ') : '') +
+      (missing ? '\n\n⚠ No easting/northing on ' + (missing === 1 ? 'a log' : 'some logs') + ' — those holes ' +
+        'render in the chart; type the HK1980 coordinates in the inspector to place them on the map.' : '') +
       (res.warnings.length ? '\n\nWarnings:\n- ' + res.warnings.join('\n- ') : '') +
       '\n\nRaw model response:\n' + String(res.rawText || '').slice(0, 2000);
     save();                       // dataset + selection are persisted immediately
@@ -6485,7 +7227,7 @@ async function runQueue() {
     try { fitToSelection(false); } catch (err) { /* ignore */ }
   }
   showToast('Successfully imported ' + ok + ' boreholes.' +
-    (skipped ? ' ' + skipped + ' file(s) skipped (Core Photo / Non-log file).' : '') +
+    (skipped ? ' ' + skipped + ' file(s) skipped — no drillhole-log page (Non-log page).' : '') +
     (bad ? ' ' + bad + ' file(s) failed — see the queue table for the exact error.' : ''), 8000);
 }
 
@@ -6518,17 +7260,38 @@ async function parseWithOpenRouter() {
       if (item) { item.message = msg; item.progress = Math.max(item.progress, 50); renderQueue(); }
     });
     showRaw(res.rawText);
-    setParseStatus('Extracted with ' + res.model + ' — review the result below before adding.' +
+    setParseStatus('Extracted with ' + (res.model || 'the model') + ' — review the result below before adding.' +
       (res.finish && res.finish !== 'stop' ? ' (finish_reason: ' + res.finish + ')' : '') +
+      ' · ' + res.sheets + ' sheet(s) → ' + res.holes.length + ' hole(s)' +
+      (res.sheets > res.holes.length ? ' (merged by hole)' : '') +
+      (res.skippedPages.length ? ' · ' + res.skippedPages.length + ' non-log page(s) skipped' : '') +
       (res.warnings.length ? ' · ' + res.warnings.length + ' note(s)' : ''));
-    stageRaw(res.json, 'Extracted from ' + (state.pdfFile.name || 'PDF') + ' page ' + res.page + ' with ' + res.model);
+    const label = res.holes.length
+      ? res.holes.map(function (h) { return h.name; }).join(', ')
+      : null;
+    stageRaw(res.holes.length ? res.json : [], 'Extracted from ' + (state.pdfFile.name || 'PDF') +
+      (res.scanned.to > res.scanned.from ? ' pages ' + res.scanned.from + '–' + res.scanned.to : ' page ' + res.page) +
+      ' with ' + (res.model || 'the model') + (label ? ' — ' + label : ''));
+    if (!label) {
+      /* stageRaw() clears the error line, so this message must come after it. */
+      showAddError('Nothing to review — no page of this PDF could be read as a drillhole log.\n\n' +
+        skippedPageDetail(res));
+    }
     if (item) {
-      item.status = 'completed';
+      item.hole = label;
       item.progress = 100;
-      item.hole = res.hole ? res.hole.name : null;
-      item.message = res.hole
-        ? 'Parsed ' + res.hole.name + ' — review the extracted JSON, then add it to the dataset'
-        : 'Parsed, but the payload needs fixing by hand in the review box';
+      if (label) {
+        item.status = 'completed';
+        item.message = 'Parsed ' + label + ' from ' + res.sheets + ' sheet' + (res.sheets === 1 ? '' : 's') +
+          ' — review the extracted JSON, then add it to the dataset';
+      } else {
+        /* Same "skip, don't fail" contract as the batch flow: a file with no
+           drillhole-log page is a non-log PDF, not an error (FR-047). */
+        item.status = 'skipped';
+        item.message = 'Skipped (Non-log page)';
+        item.detail = 'Skipped (Non-log page)\n\n' + skippedPageDetail(res) +
+          '\n\nRaw model response:\n' + String(res.rawText || '').slice(0, 2000);
+      }
     }
   } catch (e) {
     showAddError(explainError(e));
@@ -7284,10 +8047,11 @@ function deleteSelected() {
 
 const PDF_FONT = { title: 14, meta: 8, note: 7 };
 
-/** The GI log line: the A-A' alignment with chainages in cross-section mode. */
-function pdfLogLine() {
-  if (state.chartMode === CHART_MODE_SECTION) {
-    const chain = chartChain();
+/** The GI log line: the A-A' alignment with chainages in cross-section mode.
+    `mode` overrides the live chart mode (the PDF sheets pass their own mode). */
+function pdfLogLine(mode) {
+  if ((mode || state.chartMode) === CHART_MODE_SECTION) {
+    const chain = chainageAlongHoles(holesForSheetMode(CHART_MODE_SECTION));
     if (chain.length) {
       return 'Section A-A\u2032: ' + chain.map(function (c) {
         return c.name + (c.ok ? ' @ ' + c.chainage.toFixed(2) + ' m' : '');
@@ -7296,6 +8060,12 @@ function pdfLogLine() {
   }
   const holes = selectedHoles();
   return 'GI log: ' + (holes.map(function (h) { return h.name; }).join(', ') || 'none');
+}
+
+/** Bottom y of a title + metadata block (deterministic in the line count, so the
+    page box can be solved before anything is drawn). */
+function pdfTitleBlockBottom(margin, lineCount) {
+  return margin + 10 + lineCount * 4 + 2;
 }
 
 /** Draws the title + metadata block at the top of a page. Returns the y after it. */
@@ -7309,10 +8079,23 @@ function drawPdfTitleBlock(doc, title, lines, margin) {
     doc.text(line, margin, margin + 10 + i * 4);
   });
   doc.setTextColor(0);
-  return margin + 10 + lines.length * 4 + 2;
+  return pdfTitleBlockBottom(margin, lines.length);
 }
 
-/** Places an image centred inside the given box, preserving aspect ratio. */
+/** Right-aligned page stamp in the title band: "Sheet 2 of 3 - GI Dashboard". */
+function drawSheetStamp(doc, stamp, x, y) {
+  doc.setFontSize(PDF_FONT.meta);
+  doc.setTextColor(90);
+  doc.text(stamp, x, y, { align: 'right' });
+  doc.setTextColor(0);
+}
+
+/**
+ * Places an image centred inside the given box, preserving aspect ratio. The
+ * sheets are composed at the box aspect (see `pdfSheetBox` + `mapCaptureSize`),
+ * so the image fills the printable area without squashing or blank margins; any
+ * mismatch letterboxes rather than distorts.
+ */
 function placePdfImage(doc, dataUrl, box) {
   const props = doc.getImageProperties ? doc.getImageProperties(dataUrl) : null;
   const w = (props && props.width) ? props.width : box.w;
@@ -7323,32 +8106,173 @@ function placePdfImage(doc, dataUrl, box) {
   return { w: drawW, h: drawH };
 }
 
+/** True when the chart has a rendered Plotly figure to export. */
+function chartHasFigure() {
+  const host = $('chart');
+  return !!(host && host.querySelector('.plot-container'));
+}
+
 /**
- * Captures the Leaflet map for page 1 with html2canvas. Returns a data URL, or
- * null when the browser cannot capture (no html2canvas, or a tainted canvas from
- * a basemap without CORS headers) — the caller then falls back to the vector plan.
+ * The holes a sheet draws. The cross-section sheet uses the A-A' alignment when
+ * it holds at least two located holes (falling back to the ticked holes, exactly
+ * like the on-screen cross-section view); every other sheet uses the ticked holes.
  */
-async function captureMapImage() {
-  const el = $('map');
-  if (!el || typeof window.html2canvas !== 'function') return null;
+function holesForSheetMode(mode) {
+  const sel = selectedHoles();
+  if (mode !== CHART_MODE_SECTION) return sel;
+  const sec = sectionSelection().filter(function (h) { return !!gridCoords(h); });
+  return sec.length >= 2 ? sec : sel;
+}
+
+/** Tiles that Leaflet has inserted but not yet painted (the LandsD basemap). */
+function countPendingTiles(el) {
+  if (!el) return 0;
+  const tiles = el.querySelectorAll('img.leaflet-tile');
+  let pending = 0;
+  for (let i = 0; i < tiles.length; i++) {
+    if (!tiles[i].classList.contains('leaflet-tile-loaded')) pending++;
+  }
+  return pending;
+}
+
+/**
+ * Waits for the basemap to be paintable: a fixed settle window (350 ms) so the
+ * tile queue has time to flush, then — while any tile is still unloaded — up to
+ * `maxWaitMs` longer in 100 ms steps. Resolves with what actually happened.
+ */
+async function waitForMapSettle(el, settleMs, maxMs) {
+  const settle = settleMs === undefined ? PDF_MAP_CAPTURE.settleMs : settleMs;
+  const cap = maxMs === undefined ? PDF_MAP_CAPTURE.maxWaitMs : maxMs;
+  const started = Date.now();
+  let pending = countPendingTiles(el);
+  while (Date.now() - started < settle || (pending > 0 && Date.now() - started < cap)) {
+    await sleep(100);
+    pending = countPendingTiles(el);
+  }
+  return { waited: Date.now() - started, pending: pending };
+}
+
+/**
+ * Re-fits the map to every plotted marker before a print capture:
+ * `fitBounds(markers.getBounds().pad(0.2))`, never animated, so the view is
+ * settled the moment it returns. Falls back to the ticked holes' coordinates and
+ * finally to leaving the view untouched.
+ */
+function fitMapForPrint() {
+  if (!state.map || typeof L === 'undefined') return false;
+  let bounds = null;
   try {
-    const canvas = await window.html2canvas(el, {
-      useCORS: true,
-      allowTaint: false,
-      backgroundColor: '#e2e8f0',
-      logging: false,
-      scale: Math.min(2, window.devicePixelRatio || 1.5)
-    });
-    const url = canvas.toDataURL('image/png');       // throws if the canvas is tainted
-    return url && url.length > 2000 ? url : null;
+    if (state.markerLayer && typeof state.markerLayer.getBounds === 'function') {
+      const b = state.markerLayer.getBounds();
+      if (b && b.isValid()) bounds = b;
+    }
+  } catch (err) { bounds = null; }
+  if (!bounds) {
+    const pts = selectedHoles().map(markerLatLng).filter(Boolean);
+    if (pts.length >= 2) bounds = L.latLngBounds(pts);
+    else if (pts.length === 1) {
+      state.map.setView(pts[0], Math.max(state.map.getZoom(), 17), { animate: false });
+      return true;
+    }
+  }
+  if (!bounds) return false;
+  try {
+    state.map.fitBounds(bounds.pad(PDF_MAP_CAPTURE.padRatio), { animate: false });
+    return true;
+  } catch (err) { return false; }
+}
+
+/**
+ * Runs html2canvas and returns `{ url, tainted }`, or null when the capture is
+ * not usable. `allowTaint: true` (as the export specifies) lets a basemap
+ * without CORS headers be drawn; if that taints the canvas so `toDataURL()`
+ * throws, the capture is retried with `allowTaint: false`, which skips the
+ * offending tiles but always yields a clean image. The caller falls back to the
+ * vector site plan when even that fails.
+ */
+async function captureMapCanvas(el) {
+  const opts = {
+    useCORS: true,
+    backgroundColor: '#e2e8f0',
+    logging: false,
+    scale: PDF_MAP_CAPTURE.scale,
+    imageTimeout: 15000,
+    removeContainer: true,
+    width: el.clientWidth || undefined,
+    height: el.clientHeight || undefined
+  };
+  const attempts = [true, false];
+  for (let i = 0; i < attempts.length; i++) {
+    const canvas = await window.html2canvas(el, Object.assign({}, opts, { allowTaint: attempts[i] }))
+      .catch(function () { return null; });
+    if (!canvas) continue;
+    try {
+      const url = canvas.toDataURL('image/png');   // throws when the canvas is tainted
+      if (url && url.length > PDF_MAP_CAPTURE.minBytes) return { url: url, tainted: !attempts[i] };
+    } catch (err) { /* tainted — retry without allowTaint */ }
+  }
+  return null;
+}
+
+/**
+ * Captures the Leaflet map for the site-location sheet at a FIXED print aspect.
+ *
+ * The narrow squashed strip the earlier build produced came from capturing the
+ * live container while it was mid-resize. This version instead:
+ *   1. re-parents `#map` into a host of exactly the printable box size
+ *      (1120 × ~679 px for A4 landscape — the aspect is preserved exactly);
+ *   2. calls `map.invalidateSize()` immediately, then
+ *   3. `fitBounds(markers.getBounds().pad(0.2))` without animation;
+ *   4. waits ≥ 350 ms plus a bounded tile-settle poll so the LandsD tiles and the
+ *      TC label overlay are fully painted;
+ *   5. runs html2canvas at `scale: 2`;
+ *   6. restores the original element style and calls `invalidateSize()` again.
+ *
+ * Returns `{ url, tainted }` or null (no map / no html2canvas / tainted canvas).
+ * The host sits *under* the export modal (z-index 1 vs 1000), so the re-fitted
+ * map is never visible on screen.
+ */
+async function captureMapImage(opts) {
+  const o = opts || {};
+  const el = $('map');
+  if (!el || typeof window.html2canvas !== 'function' || !state.map) return null;
+  const size = (toNum(o.width) > 0 && toNum(o.height) > 0)
+    ? { width: Math.round(o.width), height: Math.round(o.height) }
+    : mapCaptureSize(277, 168);
+  const parent = el.parentNode;
+  const prevStyle = el.getAttribute('style');
+  const host = document.createElement('div');
+  host.className = 'gi-map-print-host';
+  host.style.width = size.width + 'px';
+  host.style.height = size.height + 'px';
+  try {
+    document.body.appendChild(host);
+    host.appendChild(el);
+    /* Inline styles beat the `absolute inset-0` utility classes and #map's own
+       width/height rule, so the container becomes exactly the print box. */
+    el.style.position = 'relative';
+    el.style.inset = 'auto';
+    el.style.width = size.width + 'px';
+    el.style.height = size.height + 'px';
+    state.map.invalidateSize(false);          // (2) re-measure at the print size
+    fitMapForPrint();                         // (3) fitBounds to the plotted markers
+    await waitForMapSettle(el);               // (4) ≥ 350 ms + tile settle
+    return await captureMapCanvas(el);        // (5) html2canvas (scale 2)
   } catch (err) {
     return null;
+  } finally {
+    /* (6) always restore the on-screen container and re-measure the map. */
+    if (prevStyle === null) el.removeAttribute('style');
+    else el.setAttribute('style', prevStyle);
+    if (parent) parent.appendChild(el);
+    host.remove();
+    try { state.map.invalidateSize(false); } catch (err) { /* ignore */ }
   }
 }
 
 /**
  * CORS-free fallback: draws a vector site plan from the borehole coordinates
- * (graticule, markers, labels, scale bar) so page 1 is never blank.
+ * (graticule, markers, labels, scale bar) so the location sheet is never blank.
  */
 function drawSitePlanCanvas(width, height) {
   const pts = selectedHoles().map(function (h) {
@@ -7690,7 +8614,11 @@ function drawSheetLegend(ctx, box) {
 async function buildProfileSheet(holes, opts) {
   const o = opts || {};
   const W = Math.round(o.width || PDF_PROFILE.sheetWidth);
-  const pxPerMm = W / PDF_PROFILE.printableWidthMm;
+  /* The sheet is composed for the page it will land on: the printable width in
+     mm (277 for A4 landscape, 190 for portrait) and the exact text-box aspect,
+     so after placement it fills the page with no letterbox band. */
+  const printableWmm = toNum(o.printableWidthMm) > 0 ? toNum(o.printableWidthMm) : PDF_PROFILE.printableWidthMm;
+  const pxPerMm = W / printableWmm;
   const mm = function (v) { return v * pxPerMm; };
   const pt = function (v) { return (v * 25.4 / 72) * pxPerMm; };
 
@@ -7702,8 +8630,10 @@ async function buildProfileSheet(holes, opts) {
   const bottom = mm(PDF_PROFILE.bottomMm);
 
   /* The chart takes the space left over in the A4 text box, so the printed
-     sheet fills the page without being scaled down by the aspect solver. */
-  const targetH = Math.round(W / PDF_PROFILE.printAspect);
+     sheet fills the page without being scaled down by the aspect solver.
+     `o.aspect` is the exact text-box aspect the report passes in. */
+  const aspect = toNum(o.aspect) > 0 ? toNum(o.aspect) : PDF_PROFILE.printAspect;
+  const targetH = Math.round(W / aspect);
   const chartH = Math.max(mm(PDF_PROFILE.minChartMm), targetH - headerH - legendH - gap - footerH - bottom);
   const chart = await renderProfileImage(holes, Object.assign({}, o, { width: W, height: Math.round(chartH) }));
 
@@ -7736,7 +8666,7 @@ async function buildProfileSheet(holes, opts) {
   ctx.textAlign = 'right';
   ctx.fillStyle = '#334155';
   ctx.font = '600 ' + pt(8) + 'px ' + SHEET_FONT;
-  ctx.fillText(pdfLogLine(), W - pad, mm(5.6));
+  ctx.fillText(pdfLogLine(o.mode), W - pad, mm(5.6));
   ctx.fillStyle = '#64748b';
   ctx.font = '400 ' + pt(7.5) + 'px ' + SHEET_FONT;
   ctx.fillText('Calibration dE/dN: ' + calibrationLabel(calibrationOffsets()), W - pad, mm(9.2));
@@ -7771,84 +8701,230 @@ async function buildProfileSheet(holes, opts) {
     : 'Elevation axis: mPD \u00b7 one continuous axis shared by every block \u00b7 dashed gridlines every ' + step + ' m',
     pad, footY);
   ctx.textAlign = 'right';
-  ctx.fillText('Sheet 2 of 2 — GI Dashboard', W - pad, footY);
+  ctx.fillText(sheetStamp(toNum(o.sheetIndex) > 0 ? toNum(o.sheetIndex) : 1,
+    toNum(o.sheetTotal) > 0 ? toNum(o.sheetTotal) : 1), W - pad, footY);
   ctx.textAlign = 'left';
 
   return { url: cv.toDataURL('image/png'), width: W, height: H, legendBox: { y: legendY, h: legendH }, bottom: bottom };
 }
 
-/**
- * Builds the 2-page A4-landscape report:
- *   page 1 — GI Borehole Dashboard - Site Location Plan (captured map)
- *   page 2 — GI Borehole Dashboard - Subsurface Profile (Plotly chart)
- * Returns the jsPDF document so it can be asserted without triggering a download.
- */
-async function buildReportPdf() {
-  const host = $('chart');
-  if (typeof Plotly === 'undefined') throw new Error('Plotly is not loaded.');
-  if (!window.jspdf || typeof window.jspdf.jsPDF !== 'function') throw new Error('jsPDF could not be loaded from the CDN.');
-  if (!host || !host.querySelector('.plot-container')) throw new Error('Nothing to export - tick at least one borehole first.');
+/* ---- Report builder: plan-driven, one page per selected sheet ----------- */
 
-  const holes = chartHoles();
+/** Name of the base layer on the map, for the location sheet's footer note. */
+function activeBaseLayerLabel() {
+  const names = Object.keys(state.baseLayers || {}).filter(function (n) {
+    return state.map && state.map.hasLayer(state.baseLayers[n]);
+  });
+  return names.length ? names.join(' + ') : 'HK Lands Department / Esri tiles';
+}
+
+/**
+ * Site Location Plan sheet: the map captured at the exact box aspect (so the
+ * image fills the printable area without squashing), falling back to a vector
+ * site plan drawn at the same aspect when the tiles cannot be embedded.
+ * Returns the footer note.
+ */
+async function placeMapSheet(doc, box) {
+  const capture = mapCaptureSize(box.w, box.h);
+  const shot = await captureMapImage(capture);
+  if (shot && shot.url) {
+    placePdfImage(doc, shot.url, box);
+    return {
+      note: 'Basemap: ' + activeBaseLayerLabel() + '. Map captured at ' + capture.width + ' x ' + capture.height +
+        ' px (2x print scale) and fitted to the plotted boreholes' +
+        (shot.tainted ? ' (CORS-safe capture)' : '') + '.'
+    };
+  }
+  const url = drawSitePlanCanvas(2000, Math.round(2000 * box.h / box.w)).toDataURL('image/png');
+  placePdfImage(doc, url, box);
+  return { note: 'Basemap tiles could not be captured for embedding (CORS) - showing a vector plan of the ticked holes.' };
+}
+
+/** Footer note describing the axes of a chart sheet. */
+function frameNoteFor(mode) {
+  if (mode === CHART_MODE_SECTION) {
+    return 'Cross-section sheet: X axis is the true horizontal chainage (m, HK1980 grid), Y axis is Reduced ' +
+      'Level (mPD). The dashed rock lines are linearly interpolated between the boreholes; colours follow the dual legend.';
+  }
+  const rng = computeXRange(holesForSheetMode(CHART_MODE_STRIP)) || { max: 1, min: 0 };
+  return 'Elevation axis is mPD, drawn inverted (higher elevation on the left) on one continuous axis; ' +
+    'dashed gridlines every ' + tickStepFor(rng.max - rng.min) + ' m. Colours follow the dual legend on the sheet.';
+}
+
+/**
+ * Profile / cross-section sheet: composed (offscreen, print resolution) at the
+ * exact box aspect with its own "Sheet X of Y" stamp, then placed on the page.
+ * Returns the footer note.
+ */
+async function placeChartSheet(doc, box, sheet, plan, index) {
+  const built = await buildProfileSheet(holesForSheetMode(sheet.mode), {
+    mode: sheet.mode,
+    aspect: box.w / box.h,
+    printableWidthMm: box.w,
+    sheetIndex: index + 1,
+    sheetTotal: plan.pages
+  });
+  placePdfImage(doc, built.url, box);
+  return frameNoteFor(sheet.mode);
+}
+
+/**
+ * Builds the PDF report from the export plan: only the sheets ticked in the
+ * Export PDF Options modal are captured and appended, each page carrying its
+ * "Sheet X of Y - GI Dashboard" stamp. One ticked sheet produces exactly one
+ * page. Returns the jsPDF document so it can be asserted without a download.
+ */
+async function buildReportPdf(opts) {
+  const plan = pdfPagePlan(opts || exportOptionsCurrent());
+  if (!window.jspdf || typeof window.jspdf.jsPDF !== 'function') {
+    throw new Error('jsPDF could not be loaded from the CDN.');
+  }
+  const needsChart = plan.sheets.some(function (k) { return k !== 'map'; });
+  if (needsChart) {
+    if (typeof Plotly === 'undefined') throw new Error('Plotly is not loaded.');
+    if (!chartHasFigure()) throw new Error('Nothing to export - tick at least one borehole first.');
+  }
+
+  const size = plan.page;
+  const doc = new window.jspdf.jsPDF({ orientation: plan.orientation, unit: 'mm', format: 'a4' });
+  const margin = PDF_MAP_CAPTURE.marginMm;
   const calLine = 'Calibration dE/dN: ' + calibrationLabel(calibrationOffsets());
   const generated = 'Generated: ' + formatTimestamp(new Date());
   const trackLine = 'Tracks: ' + TRACKS.map(function (t) { return t.title; }).join(', ');
-  const mapUrl = await captureMapImage();
 
-  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const margin = 10;
+  for (let i = 0; i < plan.sheets.length; i++) {
+    const key = plan.sheets[i];
+    const sheet = PDF_SHEETS.filter(function (s) { return s.key === key; })[0];
+    /* Each sheet names what IT draws, not the live chart mode: the section sheet
+       always reports the A-A' alignment, the profile sheet the strip blocks. */
+    const meta = (key === 'map')
+      ? [pdfLogLine(), calLine, generated]
+      : [pdfLogLine(sheet.mode), calLine, trackLine, generated];
+    if (i > 0) doc.addPage('a4', plan.orientation);
+    const box = pdfSheetBox(size, meta.length, margin, PDF_MAP_CAPTURE.footerMm);
+    drawPdfTitleBlock(doc, sheet.title, meta, margin);
+    drawSheetStamp(doc, plan.stamps[i], size.w - margin, margin + 5);
 
-  /* ---------------- page 1: site location plan ---------------- */
-  let imgUrl = mapUrl;
-  let note = 'Basemap: Esri World Street Map / HK Lands Department. Markers plotted from HK1980 grid coordinates.';
-  if (!imgUrl) {
-    imgUrl = drawSitePlanCanvas(2000, 1200).toDataURL('image/png');
-    note = 'Basemap tiles could not be captured for embedding (CORS) - showing a vector plan of the ticked holes.';
+    const placed = (key === 'map')
+      ? await placeMapSheet(doc, box)
+      : { note: await placeChartSheet(doc, box, sheet, plan, i) };
+
+    doc.setFontSize(PDF_FONT.note);
+    doc.setTextColor(120);
+    doc.text(placed.note, margin, size.h - margin + 2);
+    doc.setTextColor(0);
   }
-  let y = drawPdfTitleBlock(doc, 'GI Borehole Dashboard - Site Location Plan',
-    [pdfLogLine(), calLine, generated], margin);
-  placePdfImage(doc, imgUrl, { x: margin, y: y, w: pageW - margin * 2, h: pageH - y - margin - 5 });
-  doc.setFontSize(PDF_FONT.note);
-  doc.setTextColor(120);
-  doc.text(note, margin, pageH - margin + 2);
-  doc.setTextColor(0);
-
-  /* ---------------- page 2: GI Dashboard subsurface profile ----------------
-     Composed as a single high-resolution sheet (title header + profile chart +
-     dual legend + footer), so the A4 page carries the full deliverable. */
-  doc.addPage('a4', 'landscape');
-  y = drawPdfTitleBlock(doc, 'GI Dashboard - Subsurface Profile',
-    [pdfLogLine(), calLine, trackLine, generated], margin);
-  const sheet = await buildProfileSheet(holes, { mode: state.chartMode });
-  placePdfImage(doc, sheet.url, { x: margin, y: y, w: pageW - margin * 2, h: pageH - y - margin - 5 });
-  doc.setFontSize(PDF_FONT.note);
-  doc.setTextColor(120);
-  const rng = computeXRange(holes) || { max: 1, min: 0 };
-  doc.text(sectionModeOf({})
-    ? 'Cross-section sheet: X axis is the true horizontal chainage (m, HK1980 grid), Y axis is Reduced Level ' +
-      '(mPD). The dashed rock lines are linearly interpolated between the boreholes; colours follow the dual legend.'
-    : 'Elevation axis is mPD, drawn inverted (higher elevation on the left) on one continuous axis; ' +
-      'dashed gridlines every ' + tickStepFor(rng.max - rng.min) + ' m. Colours follow the dual legend on the sheet.',
-    margin, pageH - margin + 2);
-  doc.setTextColor(0);
+  doc.setProperties({
+    title: 'GI Dashboard - Borehole Report',
+    subject: 'Sheets: ' + plan.sheets.join(', ') + ' - ' + size.label,
+    creator: 'GI Dashboard'
+  });
   return doc;
 }
 
-async function exportReportPdf() {
-  if (state.busy) return;
+/** Generates the selected sheets, saves the PDF and reports the outcome. */
+async function exportReportPdf(opts) {
+  if (state.busy) return null;
   state.busy = true;
+  const status = $('export-status');
+  if (status) status.textContent = 'Capturing sheets…';
   try {
-    const doc = await buildReportPdf();
+    const optsIn = opts || exportOptionsCurrent();
+    const plan = pdfPagePlan(optsIn);
+    const doc = await buildReportPdf(optsIn);
     const ts = formatTimestamp(new Date()).replace(/[-: ]/g, '').slice(0, 12);
     doc.save('GI_Borehole_Report_' + ts + '.pdf');
-    showBanner('PDF report exported - 2 pages, A4 landscape (' + selectedHoles().length + ' holes).');
+    closeModal('modal-export');
+    showBanner('PDF report exported - ' + plan.pages + ' sheet' + (plan.pages === 1 ? '' : 's') + ', ' +
+      plan.page.label + ' (' + selectedHoles().length + ' hole(s) ticked).');
+    return doc;
   } catch (err) {
-    showBanner('PDF export failed: ' + err.message);
+    /* Keep the modal open so the failure is readable where the user clicked. */
+    if (status) status.textContent = 'Export failed: ' + err.message;
+    else showBanner('PDF export failed: ' + err.message);
+    return null;
   } finally {
     state.busy = false;
   }
+}
+
+/* ---- Export-PDF options: storage + the modal --------------------------- */
+
+/** The stored export selection (falls back to “all three sheets, landscape”). */
+function exportOptionsCurrent() {
+  let parsed = null;
+  try { parsed = JSON.parse(safeGet(LS.EXPORT) || 'null'); } catch (e) { parsed = null; }
+  return exportOptionsSanitise(parsed);
+}
+
+function saveExportOptions(opts) {
+  safeSet(LS.EXPORT, JSON.stringify(exportOptionsSanitise(opts)));
+}
+
+/** Reads the modal controls (checkboxes + orientation radios). */
+function exportOptionsFromModal() {
+  const sheets = {};
+  PDF_SHEETS.forEach(function (s) {
+    const box = document.querySelector('#modal-export input[data-sheet="' + s.key + '"]');
+    sheets[s.key] = box ? !!box.checked : false;
+  });
+  const radio = document.querySelector('#modal-export input[name="exp-orient"]:checked');
+  return exportOptionsSanitise({ sheets: sheets, orientation: radio ? radio.value : null });
+}
+
+/** Applies an option set to the modal controls. */
+function applyExportOptionsToModal(o) {
+  const opts = exportOptionsSanitise(o);
+  PDF_SHEETS.forEach(function (s) {
+    const box = document.querySelector('#modal-export input[data-sheet="' + s.key + '"]');
+    if (box) box.checked = !!opts.sheets[s.key];
+  });
+  const radio = document.getElementById('exp-orient-' + opts.orientation);
+  if (radio) radio.checked = true;
+}
+
+/** Live preview: how many pages, which sheets, in which order. */
+function updateExportModalSummary() {
+  const o = exportOptionsFromModal();
+  const host = $('export-preview');
+  const btn = $('btn-export-generate');
+  const has = exportHasSheets(o);
+  if (btn) btn.disabled = !has;
+  if (!host) return;
+  if (!has) {
+    host.innerHTML = '<b class="text-amber-700">Tick at least one sheet</b> to generate a PDF.';
+    return;
+  }
+  const plan = pdfPagePlan(o);
+  const page = plan.page;
+  const lines = plan.sheets.map(function (key, i) {
+    const sheet = PDF_SHEETS.filter(function (s) { return s.key === key; })[0];
+    return '<li>Sheet ' + (i + 1) + ' of ' + plan.pages + ' — ' + esc(sheet.label) + '</li>';
+  });
+  let hint = '';
+  if (o.sheets.section && state.section.length < 2) {
+    hint = '<p class="mt-1 text-amber-700">No A-A′ alignment drawn yet — the cross-section sheet falls ' +
+      'back to the ticked holes.</p>';
+  }
+  host.innerHTML = '<b>' + plan.pages + ' page' + (plan.pages === 1 ? '' : 's') + ' · ' + page.label + '</b>' +
+    '<ul class="mt-1 ml-4 list-disc">' + lines.join('') + '</ul>' + hint;
+}
+
+/** Opens the Export PDF Options modal (the Export PDF button lands here). */
+function openExportModal() {
+  applyExportOptionsToModal(exportOptionsCurrent());
+  updateExportModalSummary();
+  const status = $('export-status');
+  if (status) status.textContent = '';
+  openModal('modal-export');
+}
+
+/** Called by the modal's Generate PDF button: persist the choice and build it. */
+async function generatePdfFromModal() {
+  const opts = exportOptionsFromModal();
+  if (!exportHasSheets(opts)) return;
+  saveExportOptions(opts);
+  await exportReportPdf(opts);
 }
 
 /* ================ BOREHOLE SUMMARY TABLE EXPORT (CSV / Excel) ============ */
@@ -8108,9 +9184,16 @@ function init() {
     diagnostics: function () { openModal('modal-diag'); runDiagnostics(); },
     data: function () { return JSON.parse(JSON.stringify(state.data)); },
     tests: function () { return buildSelfTests({}); },
-    buildReportPdf: buildReportPdf,          // 2-page A4 landscape report (map + chart)
+    buildReportPdf: buildReportPdf,          // sheet-selected A4 report (map / profile / section)
     buildChartPdf: buildReportPdf,            // backwards-compatible alias
-    buildProfileSheet: buildProfileSheet,     // print-resolution profile sheet (PDF page 2)
+    exportReportPdf: exportReportPdf,         // generate + save (options optional)
+    openExportModal: openExportModal,
+    exportOptions: function () { return exportOptionsCurrent(); },
+    setExportOptions: saveExportOptions,
+    pdfPagePlan: pdfPagePlan,
+    mapCaptureSize: mapCaptureSize,           // print capture size (aspect-preserving)
+    pdfSheetBox: pdfSheetBox,                 // printable image box (mm) for a page
+    buildProfileSheet: buildProfileSheet,     // print-resolution profile sheet (PDF page)
     renderProfileImage: renderProfileImage,   // benchmarking figure → PNG data URL
     buildProfileFigure: buildProfileFigure,
     captureMapImage: captureMapImage,
