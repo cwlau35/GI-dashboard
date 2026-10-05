@@ -343,10 +343,12 @@
         </div>
         <p class="text-[11.5px] text-slate-500 mt-2">
           Requests go to <code class="bg-slate-100 px-1 rounded">https://openrouter.ai/api/v1/chat/completions</code>.
-          The default is the open-weight, region-free <b>qwen/qwen2.5-vl-72b-instruct</b>; if it is unavailable the app
-          automatically retries with <b>mistralai/mistral-small-3.2-24b-instruct</b>, then GLM 4.5V and Gemma 3 —
-          all served to Hong Kong IPs, unlike Gemini / GPT-4 (which OpenRouter geo-blocks here). Any OpenRouter
-          vision slug can be typed in the box.
+          The default is <b>anthropic/claude-3.5-sonnet</b> — the fastest and most accurate reader for dense HK
+          drillhole sheets; it is asked for <code class="bg-slate-100 px-1 rounded">max_tokens: 8192</code>,
+          its own output ceiling. If it is unavailable the app automatically falls back to the open-weight,
+          region-free <b>qwen/qwen2.5-vl-72b-instruct</b>, then Llama 3.2 Vision, Mistral Small 3.2, GLM 4.5V and
+          Gemma 3 — all served to Hong Kong IPs, unlike Gemini / GPT-4 (which OpenRouter geo-blocks here). Any
+          OpenRouter vision slug can be typed in the box.
         </p>
       </section>
 
@@ -2201,8 +2203,8 @@ function shortApiError(e) {
 const OPENROUTER = {
   URL: 'https://openrouter.ai/api/v1/chat/completions',
   KEY_URL: 'https://openrouter.ai/api/v1/key',
-  DEFAULT_MODEL: 'qwen/qwen2.5-vl-72b-instruct',
-  FALLBACK_MODEL: 'mistralai/mistral-small-3.2-24b-instruct',
+  DEFAULT_MODEL: 'anthropic/claude-3.5-sonnet',
+  FALLBACK_MODEL: 'qwen/qwen2.5-vl-72b-instruct',
   MODELS: OPEN_WEIGHT_VISION_MODELS.concat(['mistralai/mistral-small-3.2-24b-instruct',
            'z-ai/glm-4.5v', 'google/gemma-3-27b-it']),
   /* HTTP-Referer: the real page origin when there is one, else this fallback —
@@ -2212,8 +2214,11 @@ const OPENROUTER = {
   TITLE: 'GI Borehole Dashboard',
   /* 16 384 output tokens permanently eliminates the truncation cut-offs that a
      dense log used to hit at 8 192 — on top of the >80 % token saving from the
-     compact interval schema. If a provider caps the output below this, the call
-     automatically retries at MAX_TOKENS_FALLBACK. */
+     compact interval schema. The request builder clamps this to the called
+     model's own ceiling (outputTokensFor), so the Claude 3.5 Sonnet default —
+     capped at 8 192 — always ships `max_tokens: 8192`. If a provider caps the
+     output below the budget, the call automatically retries at
+     MAX_TOKENS_FALLBACK. */
   MAX_TOKENS: 16384,
   MAX_TOKENS_FALLBACK: 8192,    // used when a provider rejects the 16 384 budget
   MAX_TOKENS_RETRY: 16384,      // one retry when finish_reason === 'length'
@@ -2236,25 +2241,65 @@ function activeReferer() {
 }
 
 /**
- * Default vision model.
+ * Default vision model (FR-050).
  *
- * All of these are OPEN-WEIGHT, region-free vision models: OpenRouter serves
- * them without the geo restrictions that block the closed families (Google
- * Gemini, OpenAI GPT-4/5) for Hong Kong IPs — which is what produced the
- * "model is not available in your region" error. Slugs verified against
- * GET https://openrouter.ai/api/v1/models (444 models, image input confirmed).
+ * The extraction default is Anthropic **Claude 3.5 Sonnet** via OpenRouter: it
+ * is markedly faster and more accurate on dense HK drillhole sheets than the
+ * open-weight VL models, which is why it leads the Settings dropdown. Behind it
+ * the automatic retry chain keeps the OPEN-WEIGHT, region-free models
+ * (`DEFAULT_VISION_MODEL → OPEN_WEIGHT_VISION_MODELS → FALLBACK_VISION_MODEL`),
+ * so if a provider hiccups — or a Hong Kong IP is refused the closed families,
+ * which is what produced the old "model is not available in your region" error —
+ * the very next step is qwen2.5-VL and the import still completes.
+ * Slugs verified against GET https://openrouter.ai/api/v1/models (image input
+ * confirmed for every slug below).
  */
-const DEFAULT_VISION_MODEL = 'qwen/qwen2.5-vl-72b-instruct';
-const FALLBACK_VISION_MODEL = 'mistralai/mistral-small-3.2-24b-instruct';
+const DEFAULT_VISION_MODEL = 'anthropic/claude-3.5-sonnet';
+const FALLBACK_VISION_MODEL = 'qwen/qwen2.5-vl-72b-instruct';
+
+/**
+ * Settings vision-model dropdown entries (FR-050). The first entry is the
+ * default — Claude 3.5 Sonnet — and the second is the region-free open-weights
+ * fallback the automatic chain uses next; the wider open-weight walk follows,
+ * with the two closed families last and clearly marked. Lives in the pure core
+ * so the order is asserted by the self-tests and the Node harness.
+ */
+const OPENROUTER_MODELS = [
+  { id: 'anthropic/claude-3.5-sonnet', label: 'anthropic/claude-3.5-sonnet (Fastest & Most Accurate · default)' },
+  { id: 'qwen/qwen2.5-vl-72b-instruct', label: 'qwen/qwen2.5-vl-72b-instruct (Open-Weights Fallback · region-free)' },
+  { id: 'meta-llama/llama-3.2-11b-vision-instruct', label: 'meta-llama/llama-3.2-11b-vision-instruct (Region-Free open weights)' },
+  { id: 'mistralai/mistral-small-3.2-24b-instruct', label: 'mistralai/mistral-small-3.2-24b-instruct (Region-Free · cheapest)' },
+  { id: 'z-ai/glm-4.5v', label: 'z-ai/glm-4.5v (Region-Free · MoE vision)' },
+  { id: 'google/gemma-3-27b-it', label: 'google/gemma-3-27b-it (Region-Free · open weights, not Gemini)' },
+  { id: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash (region-restricted — blocked from HK)' },
+  { id: 'openai/gpt-4o-mini', label: 'openai/gpt-4o-mini (region-restricted — blocked from HK)' }
+];
+
+/**
+ * Hard per-model OUTPUT-token ceilings. OpenRouter rejects a `max_tokens` larger
+ * than the model can emit, so the request builder clamps whatever the retry
+ * ladder asks for down to the ceiling of the model actually being called.
+ * Claude 3.5 Sonnet tops out at 8 192, so every Claude request leaves the
+ * browser with exactly `max_tokens: 8192`.
+ */
+const MODEL_MAX_OUTPUT_TOKENS = { 'anthropic/claude-3.5-sonnet': 8192 };
+
+/** The output budget for `model`: its ceiling, else the shared 16 384 budget. */
+function outputTokensFor(model) {
+  const m = String(model || '');
+  if (MODEL_MAX_OUTPUT_TOKENS[m]) return MODEL_MAX_OUTPUT_TOKENS[m];
+  if (/^anthropic\//i.test(m)) return 8192;      // every Claude build emits at most 8 192
+  return OPENROUTER.MAX_TOKENS;
+}
 
 /** Model families that are geo-restricted for Hong Kong IPs. */
 const REGION_RESTRICTED_MODEL = /(^|[\/-])(gemini|gpt-4|gpt-3|o1|o3|o4)/i;
 
 /**
  * Resolves the vision model to use from whatever is stored:
- *   • unset / empty          → the region-free default
- *   • a region-restricted id → the region-free default (avoids the HK error)
- *   • anything else          → kept verbatim (open-weight or custom slug)
+ *   • unset / empty          → the default (Claude 3.5 Sonnet, FR-050)
+ *   • a region-restricted id → the default (avoids the HK error)
+ *   • anything else          → kept verbatim (Claude, open-weight or custom slug)
  */
 function visionModelOrDefault(stored) {
   const s = String(stored === null || stored === undefined ? '' : stored).trim();
@@ -2320,9 +2365,14 @@ function buildOpenRouterRequest(opts) {
   /* One user message carrying the extraction rules plus the page image — the
      shape the OpenRouter docs and the project contract both specify. */
   const prompt = o.prompt || [o.systemPrompt, o.userPrompt].filter(Boolean).join('\n\n');
+  /* `model` = the active choice, else the Claude 3.5 Sonnet default. The token
+     budget is clamped to the called model's own ceiling, so the default request
+     ships exactly `max_tokens: 8192` while the 16 384 open-weight budget still
+     applies to the models that accept it (FR-050). */
+  const model = o.model || DEFAULT_VISION_MODEL;
   const body = {
-    model: o.model || OPENROUTER.DEFAULT_MODEL,
-    max_tokens: o.maxTokens || OPENROUTER.MAX_TOKENS,
+    model: model,
+    max_tokens: Math.min(o.maxTokens || OPENROUTER.MAX_TOKENS, outputTokensFor(model)),
     temperature: OPENROUTER.TEMPERATURE,
     messages: [
       { role: 'user', content: [
@@ -3404,7 +3454,7 @@ function buildSelfTests(opts) {
   /* --- OpenRouter request contract (FR-014 / FR-031) --- */
   const DATA_URL = 'data:image/jpeg;base64,AAAB';
   const req = buildOpenRouterRequest({
-    apiKey: 'sk-or-v1-test', model: 'qwen/qwen2.5-vl-72b-instruct', dataUrl: DATA_URL,
+    apiKey: 'sk-or-v1-test', model: 'anthropic/claude-3.5-sonnet', dataUrl: DATA_URL,
     prompt: 'PROMPT', jsonMode: true
   });
   eq('openrouter', 'endpoint URL', req.url, 'https://openrouter.ai/api/v1/chat/completions');
@@ -3445,25 +3495,41 @@ function buildSelfTests(opts) {
   eq('openrouter', 'the documented offline fallback referer',
      OPENROUTER.REFERER_FALLBACK, 'https://cwlau35.github.io');
   eq('openrouter', 'X-Title header', req.headers['X-Title'], 'GI Borehole Dashboard');
-  eq('openrouter', 'default model is the region-free open-weight VL model',
-     buildOpenRouterRequest({}).body.model, 'qwen/qwen2.5-vl-72b-instruct');
-  eq('openrouter', 'region-free default constant', DEFAULT_VISION_MODEL, 'qwen/qwen2.5-vl-72b-instruct');
-  eq('openrouter', 'region-free fallback constant',
-     OPENROUTER.FALLBACK_MODEL, 'mistralai/mistral-small-3.2-24b-instruct');
+  /* --- model selection: Claude 3.5 Sonnet default + open-weights fallback (FR-050) --- */
+  eq('openrouter', 'the default request asks Claude 3.5 Sonnet',
+     buildOpenRouterRequest({}).body.model, 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'the default-model constant is Claude 3.5 Sonnet',
+     DEFAULT_VISION_MODEL, 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'OPENROUTER.DEFAULT_MODEL agrees with the default constant',
+     OPENROUTER.DEFAULT_MODEL, DEFAULT_VISION_MODEL);
+  eq('openrouter', 'the fallback-model constant is the open-weights qwen VL',
+     FALLBACK_VISION_MODEL, 'qwen/qwen2.5-vl-72b-instruct');
+  eq('openrouter', 'OPENROUTER.FALLBACK_MODEL agrees with the fallback constant',
+     OPENROUTER.FALLBACK_MODEL, FALLBACK_VISION_MODEL);
+  eq('openrouter', 'the Settings dropdown leads with Claude 3.5 Sonnet',
+     OPENROUTER_MODELS[0].id, 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'the Settings dropdown lists the open-weights fallback second',
+     OPENROUTER_MODELS[1].id, 'qwen/qwen2.5-vl-72b-instruct');
+  eq('openrouter', 'the dropdown marks the default fastest & most accurate',
+     /fastest/i.test(OPENROUTER_MODELS[0].label), true);
+  eq('openrouter', 'the dropdown offers both models plus the wider open-weight walk',
+     OPENROUTER_MODELS.length, 8);
   ok('openrouter', 'the automatic chain contains only open-weight models',
      OPENROUTER.MODELS.every(function (m) { return !REGION_RESTRICTED_MODEL.test(m); }),
      OPENROUTER.MODELS.join(', '));
   eq('openrouter', 'no closed family is listed first in the chain',
      /gemini|gpt-4/i.test(OPENROUTER.MODELS[0]), false);
-  /* --- stored model migration: closed / empty → region-free default --- */
-  eq('openrouter', 'unset model → region-free default', visionModelOrDefault(''), 'qwen/qwen2.5-vl-72b-instruct');
-  eq('openrouter', 'null model → region-free default', visionModelOrDefault(null), 'qwen/qwen2.5-vl-72b-instruct');
-  eq('openrouter', 'stored gemini → region-free default',
-     visionModelOrDefault('google/gemini-2.5-flash'), 'qwen/qwen2.5-vl-72b-instruct');
-  eq('openrouter', 'stored gemini pro → region-free default',
-     visionModelOrDefault('google/gemini-2.5-pro'), 'qwen/qwen2.5-vl-72b-instruct');
-  eq('openrouter', 'stored gpt-4o-mini → region-free default',
-     visionModelOrDefault('openai/gpt-4o-mini'), 'qwen/qwen2.5-vl-72b-instruct');
+  /* --- stored model migration: closed / empty → the Claude default --- */
+  eq('openrouter', 'unset model → Claude default', visionModelOrDefault(''), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'null model → Claude default', visionModelOrDefault(null), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'stored gemini → Claude default',
+     visionModelOrDefault('google/gemini-2.5-flash'), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'stored gemini pro → Claude default',
+     visionModelOrDefault('google/gemini-2.5-pro'), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'stored gpt-4o-mini → Claude default',
+     visionModelOrDefault('openai/gpt-4o-mini'), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'a stored Claude choice survives the load guard',
+     visionModelOrDefault('anthropic/claude-3.5-sonnet'), 'anthropic/claude-3.5-sonnet');
   eq('openrouter', 'an open-weight choice is preserved',
      visionModelOrDefault('z-ai/glm-4.5v'), 'z-ai/glm-4.5v');
   eq('openrouter', 'a custom slug is preserved',
@@ -3477,7 +3543,20 @@ function buildSelfTests(opts) {
   eq('openrouter', 'JSON mode sets response_format', req.body.response_format.type, 'json_object');
   eq('openrouter', 'JSON mode can be switched off', buildOpenRouterRequest({ jsonMode: false }).body.response_format, undefined);
   eq('openrouter', 'temperature is 0.1', req.body.temperature, 0.1);
-  eq('openrouter', 'max_tokens is 16384 (no truncation cut-offs)', req.body.max_tokens, 16384);
+  eq('openrouter', 'Claude asks for max_tokens 8192 — its own output ceiling',
+     buildOpenRouterRequest({ model: 'anthropic/claude-3.5-sonnet' }).body.max_tokens, 8192);
+  eq('openrouter', 'the default request body carries max_tokens 8192',
+     buildOpenRouterRequest({}).body.max_tokens, 8192);
+  eq('openrouter', 'outputTokensFor reports the Claude ceiling',
+     outputTokensFor('anthropic/claude-3.5-sonnet'), 8192);
+  eq('openrouter', 'outputTokensFor clamps every Claude slug to 8192',
+     outputTokensFor('anthropic/claude-3-opus'), 8192);
+  eq('openrouter', 'outputTokensFor leaves an open-weight model at 16384',
+     outputTokensFor('qwen/qwen2.5-vl-72b-instruct'), 16384);
+  eq('openrouter', 'a 16 384 request budget is clamped to the Claude ceiling',
+     buildOpenRouterRequest({ model: 'anthropic/claude-3.5-sonnet', maxTokens: 16384 }).body.max_tokens, 8192);
+  eq('openrouter', 'an open-weight model still receives the 16 384 budget',
+     buildOpenRouterRequest({ model: 'qwen/qwen2.5-vl-72b-instruct' }).body.max_tokens, 16384);
   eq('openrouter', 'a smaller token budget is accepted when a provider caps the output',
      buildOpenRouterRequest({ maxTokens: OPENROUTER.MAX_TOKENS_FALLBACK }).body.max_tokens, 8192);
   ok('openrouter', 'the truncation-retry budget is at least the primary budget',
@@ -4239,21 +4318,10 @@ const LS = {
   EXPORT: 'gi.export.v1'                   // Export-PDF options: sheets ticked + orientation
 };
 
-/**
- * Vision models offered in Settings. Every entry is an OPEN-WEIGHT model, so it
- * is served to Hong Kong IPs without the "model is not available in your
- * region" error; the two closed families are listed last, clearly marked, for
- * anyone working from an unrestricted region. The first entry is the default.
- */
-const OPENROUTER_MODELS = [
-  { id: 'qwen/qwen2.5-vl-72b-instruct', label: 'qwen/qwen2.5-vl-72b-instruct (Region-Free / Fast HK Direct · primary)' },
-  { id: 'meta-llama/llama-3.2-11b-vision-instruct', label: 'meta-llama/llama-3.2-11b-vision-instruct (Region-Free open weights · automatic fallback)' },
-  { id: 'mistralai/mistral-small-3.2-24b-instruct', label: 'mistralai/mistral-small-3.2-24b-instruct (Region-Free · cheapest)' },
-  { id: 'z-ai/glm-4.5v', label: 'z-ai/glm-4.5v (Region-Free · MoE vision)' },
-  { id: 'google/gemma-3-27b-it', label: 'google/gemma-3-27b-it (Region-Free · open weights, not Gemini)' },
-  { id: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash (region-restricted — blocked from HK)' },
-  { id: 'openai/gpt-4o-mini', label: 'openai/gpt-4o-mini (region-restricted — blocked from HK)' }
-];
+/* The Settings vision-model catalogue — `OPENROUTER_MODELS` — now lives in the
+   pure core next to `DEFAULT_VISION_MODEL`, so the dropdown order (Claude 3.5
+   Sonnet first, the open-weights fallback second) is asserted by the self-tests
+   and the Node harness (FR-050). */
 const DEFAULT_MODEL = DEFAULT_VISION_MODEL;
 const FALLBACK_MODEL = FALLBACK_VISION_MODEL;
 
@@ -4412,11 +4480,13 @@ function isPristineSeed(list) {
 }
 
 /**
- * Vision-model guard. Parsing must use a region-free, open-weight vision model
- * for Hong Kong IPs, so a stored value that is absent, empty or names a
- * geo-restricted family (Gemini / GPT / o-series) is PURGED and reset to
- * `qwen/qwen2.5-vl-72b-instruct`. A valid open-weight or custom slug is kept.
- * Runs on every load, so a stale choice can never break parsing again.
+ * Vision-model guard. Parsing defaults to `anthropic/claude-3.5-sonnet` (FR-050),
+ * so a stored value that is absent, empty or names a geo-restricted family
+ * (Gemini / GPT / o-series — the families OpenRouter blocks for Hong Kong IPs)
+ * is PURGED and reset to that Claude default; from there the automatic chain
+ * still walks the open-weight models next. A valid Claude, open-weight or custom
+ * slug is kept. Runs on every load, so a stale choice can never break parsing
+ * again.
  */
 function ensureVisionModel() {
   const stored = String(safeGet(LS.MODEL) || '').trim();
@@ -6436,17 +6506,21 @@ async function callOpenRouterModel(model, dataUrl, jsonMode, maxTokens, noReason
 
 /**
  * Attempt plan for one page. For every model:
- *   step 1 — JSON mode on, full 16 384-token budget;
+ *   step 1 — JSON mode on, at that model's OWN output ceiling
+ *            (Claude 3.5 Sonnet 8 192 · open-weight models 16 384, FR-050);
  *   step 2 — JSON mode off AND reasoning disabled (a hidden "thinking" phase
  *            burning the whole budget yields an EMPTY message with
  *            finish_reason "length", the classic dense-log failure);
- * plus a step 3 at the smaller budget when a provider refuses 16 384 tokens.
+ * plus a step 3 at the smaller budget when a provider refuses the larger one.
  */
 function buildAttemptPlan(chain) {
   const plan = [];
   (chain || []).forEach(function (model) {
-    plan.push({ model: model, jsonMode: true, budget: OPENROUTER.MAX_TOKENS, noReasoning: false });
-    plan.push({ model: model, jsonMode: false, budget: OPENROUTER.MAX_TOKENS, noReasoning: true });
+    /* Each model carries its OWN output ceiling, so the Claude 3.5 Sonnet steps
+       ask for 8 192 and the open-weight steps for 16 384 (FR-050). */
+    const budget = outputTokensFor(model);
+    plan.push({ model: model, jsonMode: true, budget: budget, noReasoning: false });
+    plan.push({ model: model, jsonMode: false, budget: budget, noReasoning: true });
   });
   return plan;
 }
