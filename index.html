@@ -2258,6 +2258,33 @@ const DEFAULT_VISION_MODEL = 'anthropic/claude-3.5-sonnet';
 const FALLBACK_VISION_MODEL = 'qwen/qwen2.5-vl-72b-instruct';
 
 /**
+ * The vision model the app ACTIVELY uses, unconditionally, unless this browser
+ * holds a deliberate alternative choice (FR-051). It is:
+ *   • what `loadState()` initialises `state.model` to,
+ *   • what every cached / empty / retired / geo-blocked value is UPGRADED to on
+ *     load and on read, and
+ *   • what the request payload and the upload-queue status line name.
+ * Aliased — never re-typed — so the Claude 3.5 Sonnet default stays defined in
+ * exactly one place.
+ */
+const ACTIVE_VISION_MODEL = DEFAULT_VISION_MODEL;   // 'anthropic/claude-3.5-sonnet'
+
+/**
+ * Slugs an EARLIER build shipped as the vision default and that this build
+ * RETIRES as an ACTIVE model (FR-051).
+ *
+ * A browser that cached one — the reported bug is
+ * `openrouter_vision_model = "qwen/qwen2.5-vl-72b-instruct"`, left over from the
+ * region-free era — is upgraded to the Claude default the moment the app loads
+ * and again whenever the model is read, so the app cannot silently keep parsing
+ * with the old model merely because a value happens to sit in localStorage.
+ * The slug is NOT deleted from the product: it stays in the Settings dropdown and
+ * remains step 2 of the automatic fallback chain, so a provider hiccup still
+ * lands on qwen2.5-VL. It is only refused as the ACTIVE default.
+ */
+const RETIRED_VISION_MODELS = ['qwen/qwen2.5-vl-72b-instruct'];
+
+/**
  * Settings vision-model dropdown entries (FR-050). The first entry is the
  * default — Claude 3.5 Sonnet — and the second is the region-free open-weights
  * fallback the automatic chain uses next; the wider open-weight walk follows,
@@ -2306,6 +2333,40 @@ function visionModelOrDefault(stored) {
   if (!s) return DEFAULT_VISION_MODEL;
   if (REGION_RESTRICTED_MODEL.test(s)) return DEFAULT_VISION_MODEL;
   return s;
+}
+
+/** True when `id` is a slug an earlier build defaulted to and this one retires. */
+function isRetiredVisionModel(id) {
+  const s = String(id === null || id === undefined ? '' : id).trim().toLowerCase();
+  return !!s && RETIRED_VISION_MODELS.indexOf(s) !== -1;
+}
+
+/**
+ * The ACTIVE vision model, resolved STRICTLY (FR-051):
+ *   • a retired default  → Claude 3.5 Sonnet (the old qwen cache is upgraded)
+ *   • unset / undefined  → Claude 3.5 Sonnet
+ *   • a geo-blocked slug → Claude 3.5 Sonnet
+ *   • anything else      → kept verbatim (a deliberate Claude, open-weight or
+ *                          custom choice)
+ * This is the strict counterpart of the lenient `visionModelOrDefault` reader:
+ * every path that decides which model is CALLED goes through here, so a stale
+ * localStorage value can never make the app keep calling the retired default.
+ */
+function upgradeVisionModel(stored) {
+  const s = String(stored === null || stored === undefined ? '' : stored).trim();
+  if (isRetiredVisionModel(s)) return ACTIVE_VISION_MODEL;
+  return visionModelOrDefault(s);
+}
+
+/**
+ * The catalogue label for a slug, falling back to the slug itself for a custom
+ * entry — used by the live status line so "Asking …" names the model being
+ * invoked, not a generic word like "the model".
+ */
+function visionModelLabel(id) {
+  const s = String(id === null || id === undefined ? '' : id).trim();
+  const hit = OPENROUTER_MODELS.filter(function (m) { return m.id === s; })[0];
+  return hit ? hit.label : s;
 }
 
 /**
@@ -3534,6 +3595,41 @@ function buildSelfTests(opts) {
      visionModelOrDefault('z-ai/glm-4.5v'), 'z-ai/glm-4.5v');
   eq('openrouter', 'a custom slug is preserved',
      visionModelOrDefault('some-vendor/custom-vl-9b'), 'some-vendor/custom-vl-9b');
+  /* --- FR-051: the retired qwen cache can never stay the ACTIVE model --- */
+  eq('openrouter', 'the active-model constant is Claude 3.5 Sonnet',
+     ACTIVE_VISION_MODEL, 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'a cached qwen default is upgraded to Claude',
+     upgradeVisionModel('qwen/qwen2.5-vl-72b-instruct'), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'an undefined cache is upgraded to Claude',
+     upgradeVisionModel(undefined), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'a null cache is upgraded to Claude',
+     upgradeVisionModel(null), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'a blank cache is upgraded to Claude',
+     upgradeVisionModel('   '), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'the retired slug is upgraded however it is cased or padded',
+     upgradeVisionModel('  Qwen/Qwen2.5-VL-72B-Instruct '), 'anthropic/claude-3.5-sonnet');
+  ok('openrouter', 'only the retired default is retired',
+     isRetiredVisionModel('qwen/qwen2.5-vl-72b-instruct') &&
+     !isRetiredVisionModel('anthropic/claude-3.5-sonnet') &&
+     !isRetiredVisionModel('z-ai/glm-4.5v') && !isRetiredVisionModel('') && !isRetiredVisionModel(null),
+     'retired list');
+  eq('openrouter', 'a cached qwen default resolves to the request default',
+     upgradeVisionModel('qwen/qwen2.5-vl-72b-instruct'), OPENROUTER.DEFAULT_MODEL);
+  eq('openrouter', 'a deliberate Claude choice is kept',
+     upgradeVisionModel('anthropic/claude-3.5-sonnet'), 'anthropic/claude-3.5-sonnet');
+  eq('openrouter', 'a deliberate open-weight choice is kept',
+     upgradeVisionModel('z-ai/glm-4.5v'), 'z-ai/glm-4.5v');
+  eq('openrouter', 'a deliberate custom slug is kept',
+     upgradeVisionModel('some-vendor/custom-vl-9b'), 'some-vendor/custom-vl-9b');
+  ok('openrouter', 'the retired slug is still the automatic fallback and stays in the dropdown',
+     FALLBACK_VISION_MODEL === 'qwen/qwen2.5-vl-72b-instruct' &&
+     OPENROUTER.MODELS.indexOf('qwen/qwen2.5-vl-72b-instruct') !== -1 &&
+     OPENROUTER_MODELS.some(function (m) { return m.id === 'qwen/qwen2.5-vl-72b-instruct'; }),
+     'kept as fallback');
+  eq('openrouter', 'the status-line label names the model being invoked',
+     visionModelLabel('anthropic/claude-3.5-sonnet'), OPENROUTER_MODELS[0].label);
+  eq('openrouter', 'the status-line label falls back to the slug for a custom entry',
+     visionModelLabel('some-vendor/custom-vl-9b'), 'some-vendor/custom-vl-9b');
   eq('openrouter', 'a single user message is sent', req.body.messages.length, 1);
   eq('openrouter', 'the message role is user', req.body.messages[0].role, 'user');
   eq('openrouter', 'content[0] is text', req.body.messages[0].content[0].type, 'text');
@@ -4321,7 +4417,10 @@ const LS = {
 /* The Settings vision-model catalogue — `OPENROUTER_MODELS` — now lives in the
    pure core next to `DEFAULT_VISION_MODEL`, so the dropdown order (Claude 3.5
    Sonnet first, the open-weights fallback second) is asserted by the self-tests
-   and the Node harness (FR-050). */
+   and the Node harness (FR-050).
+   `DEFAULT_MODEL` / `FALLBACK_MODEL` remain as the short legacy aliases; the
+   model the app actually calls is `ACTIVE_VISION_MODEL`, resolved for every
+   request by `activeVisionModel()` (FR-051). */
 const DEFAULT_MODEL = DEFAULT_VISION_MODEL;
 const FALLBACK_MODEL = FALLBACK_VISION_MODEL;
 
@@ -4406,21 +4505,24 @@ async function loadKeyConfig() {
   let applied = false;
   if (apiKeyIsUsable(key) && !apiKeyIsUsable(state.apiKey)) { state.configKey = key; applied = true; }
   if (model && !apiKeyIsUsable(state.apiKey)) {                 // never override a personal choice
-    const resolved = visionModelOrDefault(model);
+    const resolved = upgradeVisionModel(model);
     if (resolved !== state.model) { state.model = resolved; applied = true; }
   }
   if (applied) {
     updateSettingsUI();
     setKeyStatus('Team config loaded from ' + KEY_CONFIG_URL + ' (' + maskKey(currentApiKey()) +
-      '), model ' + state.model + '.');
+      '), model ' + activeVisionModel() + '.');
   }
   return applied;
 }
 
 const PDF_WORKER_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+/* STRICT (FR-051): the active vision model is Claude 3.5 Sonnet from the first
+   line of `state` — never the retired qwen default — and `loadState()` re-asserts
+   it from storage on every boot. */
 const state = {
-  data: [], selected: new Set(), search: '', apiKey: '', configKey: '', model: DEFAULT_MODEL,
+  data: [], selected: new Set(), search: '', apiKey: '', configKey: '', model: ACTIVE_VISION_MODEL,
   keyMigration: '',
   demoCleared: false,        // set when the inherited demo dataset was cleared once
   lastUnplottable: 0,        // change-detection for the "no coordinates" toast
@@ -4435,6 +4537,19 @@ const state = {
   /* multi-file upload queue (max 2 parsed in parallel) */
   queue: [], queueSeq: 0
 };
+
+/**
+ * The vision model THIS session is actively using (FR-051) — the value the
+ * request payload, the retry ladder and the queue status line all read.
+ *
+ * Strict by construction: `upgradeVisionModel` turns a cached
+ * `qwen/qwen2.5-vl-72b-instruct`, an empty value or a geo-blocked family into
+ * Claude 3.5 Sonnet, so this answers `anthropic/claude-3.5-sonnet` on every
+ * browser that has not deliberately chosen another model in Settings.
+ */
+function activeVisionModel() {
+  return upgradeVisionModel(state.model);
+}
 
 const $ = function (id) { return document.getElementById(id); };
 const esc = function (s) {
@@ -4480,27 +4595,39 @@ function isPristineSeed(list) {
 }
 
 /**
- * Vision-model guard. Parsing defaults to `anthropic/claude-3.5-sonnet` (FR-050),
- * so a stored value that is absent, empty or names a geo-restricted family
- * (Gemini / GPT / o-series — the families OpenRouter blocks for Hong Kong IPs)
- * is PURGED and reset to that Claude default; from there the automatic chain
- * still walks the open-weight models next. A valid Claude, open-weight or custom
- * slug is kept. Runs on every load, so a stale choice can never break parsing
- * again.
+ * Vision-model guard — the STRICT load-time upgrade (FR-051).
+ *
+ * Parsing defaults to `anthropic/claude-3.5-sonnet`, so whatever this browser
+ * cached is resolved through `upgradeVisionModel()` and the result is PERSISTED:
+ *   • a RETIRED default (`qwen/qwen2.5-vl-72b-instruct`, the pre-Claude default)
+ *     → overwritten with the Claude default,
+ *   • absent / empty → the Claude default,
+ *   • a geo-restricted family (Gemini / GPT / o-series — the families OpenRouter
+ *     blocks for Hong Kong IPs) → the Claude default,
+ *   • a deliberate Claude, open-weight or custom slug → kept.
+ * From the Claude default the automatic chain still walks the open-weight models
+ * (`OPENROUTER.MODELS` → `FALLBACK_VISION_MODEL`). Runs on every load, so a stale
+ * cached choice can never keep the app on the old model again.
  */
 function ensureVisionModel() {
   const stored = String(safeGet(LS.MODEL) || '').trim();
   const legacy = String(safeGet(LS.LEGACY_MODEL) || '').trim();
   const candidate = stored || legacy;
-  if (!candidate || REGION_RESTRICTED_MODEL.test(candidate)) {
+  const resolved = upgradeVisionModel(candidate);
+  if (!candidate || resolved !== candidate) {
+    /* Overwrite — not merely default in memory — so the upgrade survives the
+       next reload even if this session never sends a request. */
     safeDel(LS.MODEL);
     safeDel(LS.LEGACY_MODEL);
-    safeSet(LS.MODEL, DEFAULT_VISION_MODEL);
-    if (candidate) {
+    safeSet(LS.MODEL, resolved);
+    if (isRetiredVisionModel(candidate)) {
+      console.info('[GI] the stored vision model "' + candidate + '" is the retired default — upgraded to ' +
+        resolved + ' (qwen2.5-VL stays available as the automatic fallback).');
+    } else if (candidate) {
       console.info('[GI] stored vision model "' + candidate + '" is empty or region-restricted — reset to ' +
-        DEFAULT_VISION_MODEL);
+        resolved);
     }
-    return DEFAULT_VISION_MODEL;
+    return resolved;
   }
   safeSet(LS.MODEL, candidate);
   safeDel(LS.LEGACY_MODEL);
@@ -4525,6 +4652,10 @@ function loadState() {
     state.apiKey = '';
     safeDel(LS.API_KEY);
   }
+  /* STRICT (FR-051): whatever an earlier session cached — most often the retired
+     `qwen/qwen2.5-vl-72b-instruct` — is UPGRADED and OVERWRITTEN here with the
+     Claude 3.5 Sonnet default, so the app cannot keep parsing with the old model
+     merely because a value sat in localStorage. */
   state.model = ensureVisionModel();
 
   let data = null;
@@ -5997,9 +6128,13 @@ function updateSettingsUI() {
     }).join('') + '<option value="__custom">Custom…</option>';
   }
   if (sel) {
-    const known = OPENROUTER_MODELS.some(function (m) { return m.id === state.model; });
-    if (known) { sel.value = state.model; $('model-custom').value = ''; }
-    else { sel.value = '__custom'; $('model-custom').value = state.model; }
+    /* The dropdown shows the ACTIVE model (FR-051): after a stale qwen cache has
+       been upgraded it reads "anthropic/claude-3.5-sonnet (Fastest & Most
+       Accurate · default)" — never the retired slug. */
+    const active = activeVisionModel();
+    const known = OPENROUTER_MODELS.some(function (m) { return m.id === active; });
+    if (known) { sel.value = active; $('model-custom').value = ''; }
+    else { sel.value = '__custom'; $('model-custom').value = active; }
   }
   updateCalibrationUI();
   const hint = $('key-hint');
@@ -6022,7 +6157,7 @@ function updateSettingsUI() {
     : apiKeySource() === 'config'
       ? 'Using the team config file ' + KEY_CONFIG_URL + ' (' + maskKey(state.configKey) + ').'
       : 'Using the built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) + ') — no personal key saved.') +
-    ' Model: ' + state.model + '.' +
+    ' Model: ' + activeVisionModel() + '.' +
     (state.keyMigration ? ' ⚠ ' + state.keyMigration : '') +
     (shapeNow === 'complete' ? '' : ' ⚠ This key looks ' + shapeNow + ' — check for a truncated paste.'),
     !!state.keyMigration);
@@ -6040,7 +6175,12 @@ function readModelFromUI() {
 
 function saveSettings() {
   state.apiKey = ($('api-key').value || '').trim();
-  state.model = readModelFromUI();
+  /* The ACTIVE model — never a retired slug (FR-051). Picking the old qwen
+     default in the dropdown resolves to Claude 3.5 Sonnet and the status line
+     below says so, instead of storing a model the app then refuses to call. */
+  const asked = readModelFromUI();
+  state.model = upgradeVisionModel(asked);
+  const retiredPick = state.model !== asked ? asked : '';
   /* Never store a key that cannot authenticate: keeping the built-in team key
      working matters more than honouring a truncated paste. */
   if (state.apiKey && apiKeyIsUnusable(state.apiKey)) {
@@ -6065,9 +6205,11 @@ function saveSettings() {
   applyCalibrationFromUI();
 
   updateSettingsUI();
-  setKeyStatus(state.apiKey
+  setKeyStatus((state.apiKey
     ? 'Saved ✓ — personal key stored in localStorage (' + maskKey(state.apiKey) + '), model ' + state.model + '.'
-    : 'Personal key cleared — back to the built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) + '), model ' + state.model + '.');
+    : 'Personal key cleared — back to the built-in team key (' + maskKey(DEFAULT_OPENROUTER_KEY) + '), model ' + state.model + '.') +
+    (retiredPick ? ' ⓘ ' + retiredPick + ' is retired as an active model — it stays the automatic fallback, so the' +
+      ' active model is ' + state.model + '.' : ''));
 }
 
 async function testApiKey() {
@@ -6540,7 +6682,10 @@ function attemptLabel(step) {
  * retrying cannot fix it.
  */
 async function callOpenRouterWithFallback(dataUrl, onStatus) {
-  const chain = [state.model]
+  /* Step 1 is the ACTIVE model: `activeVisionModel()` upgrades a stale or retired
+     cache entry to Claude 3.5 Sonnet, so the ladder can never START on qwen just
+     because an old session left it in localStorage (FR-051). */
+  const chain = [activeVisionModel()]
     .concat(OPENROUTER.MODELS)
     .concat([DEFAULT_VISION_MODEL, FALLBACK_VISION_MODEL])
     .filter(function (m, i, a) { return !!m && a.indexOf(m) === i; });
@@ -6553,7 +6698,8 @@ async function callOpenRouterWithFallback(dataUrl, onStatus) {
   for (let s = 0; s < plan.length; s++) {
     const step = plan[s];
     try {
-      status('Asking ' + step.model + attemptLabel(step) +
+      /* The status line NAMES the model actually being invoked (FR-051). */
+      status('Asking ' + visionModelLabel(step.model) + attemptLabel(step) +
         (step.budget < OPENROUTER.MAX_TOKENS ? ' at ' + step.budget + ' tokens' : '') + '…');
       let out = await callOpenRouterModel(step.model, dataUrl, step.jsonMode, step.budget, step.noReasoning);
       /* Content, but cut off mid-JSON: retry once with the full budget. */
@@ -6562,7 +6708,11 @@ async function callOpenRouterWithFallback(dataUrl, onStatus) {
           OPENROUTER.MAX_TOKENS_RETRY + ' tokens…');
         out = await callOpenRouterModel(step.model, dataUrl, step.jsonMode, OPENROUTER.MAX_TOKENS_RETRY, step.noReasoning);
       }
-      if (step.model !== state.model) {
+      /* Remember the model that actually answered this page — but NEVER adopt a
+         retired slug (qwen2.5-VL) as the active model: it is the fallback, not a
+         default, so the stored value can never be re-polluted with it. The next
+         page therefore starts from Claude again, exactly as FR-051 requires. */
+      if (step.model !== state.model && !isRetiredVisionModel(step.model)) {
         state.model = step.model;
         safeSet(LS.MODEL, step.model);
       }
@@ -6990,7 +7140,7 @@ async function callVisionWithRetries(dataUrl, onStatus, pageNo) {
         ' of ' + MAX_REQUEST_RETRIES + ' in ' + (RETRY_DELAY_MS / 1000) + ' s…');
       await sleep(RETRY_DELAY_MS);
       onStatus('Retrying attempt ' + (attempt + 1) + ' of ' + (MAX_REQUEST_RETRIES + 1) +
-        ' — asking OpenRouter again…');
+        ' — asking ' + activeVisionModel() + ' on OpenRouter again…');
     }
   }
 }
@@ -7050,7 +7200,8 @@ async function extractHoleFromPdf(file, onStatus) {
     const kb = Math.round((img.bytes || String(img.dataUrl).length) / 1024);
     status('Page ' + p + ' (' + verdict.match + ') rendered ' + img.width + '×' + img.height + ' px · ' +
       (o.mime === 'image/png' ? 'PNG' : 'JPEG ' + (img.quality || JPEG_QUALITY)) + ' · ' + kb + ' KB' +
-      (img.shrank ? ' (auto-shrunk to fit the 500 KB budget)' : '') + ' — sending to OpenRouter…');
+      (img.shrank ? ' (auto-shrunk to fit the 500 KB budget)' : '') + ' — sending to ' +
+      activeVisionModel() + ' via OpenRouter…');
 
     const out = await callVisionWithRetries(img.dataUrl, status, p);
     /* Strip the markdown fence the model sometimes wraps the JSON in, then parse. */
@@ -7158,7 +7309,9 @@ function skippedPageDetail(res) {
 async function processQueueItem(item) {
   item.status = 'processing';
   item.progress = 8;
-  item.message = 'Starting…';
+  /* The queue row names the model this file is actually sent to (FR-051) —
+     "Asking anthropic/claude-3.5-sonnet…", not a generic "Starting…". */
+  item.message = 'Asking ' + activeVisionModel() + '…';
   item.detail = null;
   renderQueue();
   try {
@@ -7168,7 +7321,7 @@ async function processQueueItem(item) {
       renderQueue();
     });
     item.progress = 80;
-    item.message = 'Reading JSON from ' + (res.model || 'the model') + '…';
+    item.message = 'Reading JSON from ' + (res.model || activeVisionModel()) + '…';
     renderQueue();
 
     /* Every page was a non-log sheet (or carried no log heading at all): SKIP,
@@ -9284,7 +9437,7 @@ function init() {
     apiKey: currentApiKey,
     keySource: apiKeySource,
     usingBuiltInKey: usingBuiltInKey,
-    model: function () { return state.model; },
+    model: function () { return activeVisionModel(); },
     /* Mirrors Settings → Save: the single place a key is written to storage. */
     setKey: function (k) {
       $('api-key').value = k === null || k === undefined ? '' : String(k);
